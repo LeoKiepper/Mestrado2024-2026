@@ -27,3 +27,23 @@ MAC_aguas_claras_2025-01-21-12-07-24_0/device3-get_current_actual_value.csv
 MAC_aguas_claras_2025-01-21-12-07-24_0/device4-get_current_actual_value.csv
 MAC_aguas_claras_2025-01-21-12-07-24_0/device6-get_current_actual_value.csv
 DemonstracaoTrechos.svg
+MovingAverageA.svg
+MovingAverageB.svg
+TelemetryCPU.svg
+TelemetryMotors.svg
+TelemetryTemperature.svg
+TelemetryCPUZoom1.svg
+TelemetryTemperatureZoom1.svg
+TelemetryCPUZoom2.svg
+TelemetryTemperatureZoom2.svg
+TelemetryZoomCPU1.svg
+TelemetryZoomCPU2.svg
+TelemetryZoomTemperature1.svg
+TelemetryZoomTemperature2.svg
+grafico_vazio.png
+Project 1.mp4
+telemetria_temp.mp4
+TelemetryVel.svg
+VideoTelemetria.mp4
+MAC_aguas_claras_2025-01-21-12-07-24_0/cmd_vel.csv
+MAC_aguas_claras_2025-01-21-12-07-24_0/robot_vel.csv
