@@ -48,3 +48,6 @@ VideoTelemetria.mp4
 MAC_aguas_claras_2025-01-21-12-07-24_0/cmd_vel.csv
 MAC_aguas_claras_2025-01-21-12-07-24_0/robot_vel.csv
 itabira_galeria_oleo_frontal_jan-2025.mp4
+__pycache__/telemetria.cpython-313.pyc
+__pycache__/VideoTelemetria.cpython-313.pyc
+output.mp4
