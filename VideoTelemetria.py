@@ -41,6 +41,7 @@ def gerar_telemetria_video(output, video, *telemetria, **kw):
 	import ffmpeg
 	import numpy as np
 	import pandas as pd
+	import matplotlib; matplotlib.use('Agg')
 	import matplotlib.pyplot as plt
 	from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 	from matplotlib.colors import is_color_like as iscolor
@@ -51,79 +52,80 @@ def gerar_telemetria_video(output, video, *telemetria, **kw):
 	from tqdm import tqdm
 	import psutil
 	import threading
-
+	import queue
+	import subprocess
 	def calcular_largura_yticklabels(*tels, **kwargs):
-		"""
-		Calcula a largura máxima necessária para acomodar os yticklabels de todas as telemetrias passadas,
-		considerando as configurações de fonte especificadas em plotkw (como ytick_fontsize, fontweight, fontfamily, fontstyle).
-		
-		Cada telemetria pode ser:
-			- Um DataFrame ou Series (que será convertido se necessário), ou
-			- Uma tupla no formato (telemetria, kw) onde kw é um dicionário que pode conter a chave "plotkw"
-			com configurações de fonte para os yticklabels.
-		
-		Retorna:
-			A largura máxima em pixels.
-		"""
-		import matplotlib.pyplot as plt
-		from matplotlib.font_manager import FontProperties
-		import matplotlib.backends.backend_agg as agg
-		import pandas as pd
-		import re
-		
-		kwargs=list(kwargs.items())[0][1]
-		dpi=kwargs['dpi']
-		max_width = 0
-		fp = FontProperties()  # Propriedades padrão
-		for tel in tels:
-			tel=tel[0]
-			if isinstance(tel, tuple): 			data = tel[0]; kw = tel[1]
-			else: 								data = tel[0]; kw = {}
-			if isinstance(data, pd.Series): 	data = data.to_frame()
-			# Extrai configurações de fonte se existirem
-			font_kwargs = {}
-			if isinstance(kw, dict) and "plotkw" in kw:
-				plotkw = kw["plotkw"]
-				for key in ["ytick_fontsize", "fontweight", "fontfamily", "fontstyle"]:
-					if key in plotkw:
-						font_kwargs[key] = plotkw[key]
-			if font_kwargs:
-				fp = FontProperties(**font_kwargs)
-			fig, ax = plt.subplots(dpi=dpi)
-			if not data.empty:
-				y_min = data.min().min()
-				y_max = data.max().max()
-				ax.set_ylim(y_min, y_max)
-			else:
-				ax.set_ylim(0, 1)
-			fig.canvas.draw()
-			canvas = agg.FigureCanvasAgg(fig)
-			canvas.draw()
-			renderer = canvas.get_renderer()
-			pad_pts = plt.rcParams['ytick.major.pad']  # Padrão do Matplotlib
-			pad_px = pad_pts * fig.dpi / 72  # Convertendo de pontos para pixels
-			minus_width, _, _ = renderer.get_text_width_height_descent("−", fp, ismath=False)
-			# for label in ax.get_yticklabels():
-			# 	text = label.get_text()
-			# 	if not text:
-			# 		continue
-			# 	label.set_fontproperties(fp)
-			# 	bbox = label.get_window_extent(renderer=renderer)
-			# 	width = bbox.width
-			# 	if width > max_width:
-			# 		max_width = width
-			for label in ax.get_yticklabels():
-				text = label.get_text()
-				if not text: continue
-				label.set_fontproperties(fp)
-				w, _, _ = renderer.get_text_width_height_descent(text, fp, ismath=False)
-				if "−" in text:  # Matplotlib usa U+2212 "−", que é diferente de hífen "-"
-					w += minus_width
-			width_total = w + pad_px
-			if width_total > max_width:
-					max_width = width_total
-			plt.close(fig)
-		return max_width
+			"""
+			Calcula a largura máxima necessária para acomodar os yticklabels de todas as telemetrias passadas,
+			considerando as configurações de fonte especificadas em plotkw (como ytick_fontsize, fontweight, fontfamily, fontstyle).
+			
+			Cada telemetria pode ser:
+				- Um DataFrame ou Series (que será convertido se necessário), ou
+				- Uma tupla no formato (telemetria, kw) onde kw é um dicionário que pode conter a chave "plotkw"
+				com configurações de fonte para os yticklabels.
+			
+			Retorna:
+				A largura máxima em pixels.
+			"""
+			import matplotlib.pyplot as plt
+			from matplotlib.font_manager import FontProperties
+			import matplotlib.backends.backend_agg as agg
+			import pandas as pd
+			import re
+			
+			kwargs=list(kwargs.items())[0][1]
+			dpi=kwargs['dpi']
+			max_width = 0
+			fp = FontProperties()  # Propriedades padrão
+			for tel in tels:
+				tel=tel[0]
+				if isinstance(tel, tuple): 			data = tel[0]; kw = tel[1]
+				else: 								data = tel[0]; kw = {}
+				if isinstance(data, pd.Series): 	data = data.to_frame()
+				# Extrai configurações de fonte se existirem
+				font_kwargs = {}
+				if isinstance(kw, dict) and "plotkw" in kw:
+					plotkw = kw["plotkw"]
+					for key in ["ytick_fontsize", "fontweight", "fontfamily", "fontstyle"]:
+						if key in plotkw:
+							font_kwargs[key] = plotkw[key]
+				if font_kwargs:
+					fp = FontProperties(**font_kwargs)
+				fig, ax = plt.subplots(dpi=dpi)
+				if not data.empty:
+					y_min = data.min().min()
+					y_max = data.max().max()
+					ax.set_ylim(y_min, y_max)
+				else:
+					ax.set_ylim(0, 1)
+				fig.canvas.draw()
+				canvas = agg.FigureCanvasAgg(fig)
+				canvas.draw()
+				renderer = canvas.get_renderer()
+				pad_pts = plt.rcParams['ytick.major.pad']  # Padrão do Matplotlib
+				pad_px = pad_pts * fig.dpi / 72  # Convertendo de pontos para pixels
+				minus_width, _, _ = renderer.get_text_width_height_descent("−", fp, ismath=False)
+				# for label in ax.get_yticklabels():
+				# 	text = label.get_text()
+				# 	if not text:
+				# 		continue
+				# 	label.set_fontproperties(fp)
+				# 	bbox = label.get_window_extent(renderer=renderer)
+				# 	width = bbox.width
+				# 	if width > max_width:
+				# 		max_width = width
+				for label in ax.get_yticklabels():
+					text = label.get_text()
+					if not text: continue
+					label.set_fontproperties(fp)
+					w, _, _ = renderer.get_text_width_height_descent(text, fp, ismath=False)
+					if "−" in text:  # Matplotlib usa U+2212 "−", que é diferente de hífen "-"
+						w += minus_width
+				width_total = w + pad_px
+				if width_total > max_width:
+						max_width = width_total
+				plt.close(fig)
+			return max_width
 	def calcular_altura_xticklabels(**kwargs):
 		"""
 		Calcula a altura extra necessária para os xticklabels e xlabel, considerando os kwargs passados.
@@ -235,7 +237,7 @@ def gerar_telemetria_video(output, video, *telemetria, **kw):
 		return img
 
 
-
+	print("Iniciando a geração do vídeo "+f"{output}")
 	#%% ==========================================  Validação e tratamento de argumentos, processamentos iniciais  =========================================
 	err = lambda msg: (_ for _ in ()).throw(ValueError(msg));	inst=isinstance
 	printyvals_fmt=lambda num,tam,dec: "" if np.isnan(num) else f"{num:>{tam}.{dec}f}"	# Função de format da string para uso nas funções printyvals_...
@@ -386,89 +388,89 @@ def gerar_telemetria_video(output, video, *telemetria, **kw):
 
 
 	#%% ======================================  Processa os frames em pipe para gerar o vídeo auxiliar da telemetria  ======================================
-	# temp_file_tel = os.path.join(temp_dir, f"telemetria_aux.mp4")
-	# if os.path.exists(temp_file_tel): safe_remove(temp_file_tel)
-	process_tel = (
-		ffmpeg
-		.input('pipe:0',
-			format='rawvideo',
-			pix_fmt='rgba',
-			s=f'{telemetry_area_width}x{altura}',
-			framerate=fps,
-			thread_queue_size=1024  # Aumenta o tamanho da fila de threads
-			)
-		.output('pipe:1',
-				format='rawvideo',
-				pix_fmt='rgba',
-				r=fps,
-				max_muxing_queue_size=1024  # Aumenta o tamanho da fila de multiplexação
-			)
-		.overwrite_output()
-		.run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True)
-	)
-	# # Verificar se o processo foi iniciado corretamente
-	# print("Processo ffmpeg iniciado...")
-
-	# --------------------------------------------------------  Inicia o monitoramento do processo  --------------------------------------------------------
+	# # --------------------------------------------------------  Monitoramento do processo  --------------------------------------------------------
 	# def monitor_ffmpeg_stderr():
 	# 	while True:
 	# 		output = process_tel.stderr.readline()
 	# 		if output:
-	# 			print(f"[FFmpeg]: {output.decode().strip()}")
+	# 			# Abre uma nova janela do PowerShell para imprimir a saída do ffmpeg
+	# 			subprocess.run(["powershell", "-Command", f"Write-Host '[FFmpeg]: {output.decode().strip()}'"])
 	# 		if process_tel.poll() is not None:
 	# 			break
 	# threading.Thread(target=monitor_ffmpeg_stderr, daemon=True).start()
 
+	# Configuração do processo ffmpeg (ajuste os parâmetros conforme necessário)
+	process_tel = (
+		ffmpeg
+		.input("pipe:0", format="rawvideo", pix_fmt="rgba", s=f"{telemetry_area_width}x{altura}", framerate=fps)
+		.output("VideoTelemetria.mp4", 
+				format="mp4",
+				vcodec="libx264", 
+				pix_fmt="yuv420p", 
+				r=fps,
+				movflags="+faststart")
+		.overwrite_output()
+		.global_args('-nostdin')  # Evita que o ffmpeg tente ler da entrada padrão além do pipe
+		.run_async(pipe_stdin=True, pipe_stderr=True)
+	)
+	# # Thread para consumir continuamente o stdout do ffmpeg (evita bloqueio do pipe)
+	# def consume_stdout():
+	# 	while True:
+	# 		data = process_tel.stdout.read(1024)
+	# 		if not data:
+	# 			break
+	# 		# Aqui podemos descartar os dados ou registrá-los se necessário
+	# 		# Ex: print(data)
+			
+	# # Inicia a thread consumidora do stdout
+	# threading.Thread(target=consume_stdout, daemon=True).start()
+
 	# ----------------------------------------------------------------  Geração dos frames  ----------------------------------------------------------------
 	n_frames = int(duracao * fps)
+
 	def frame_generator():
 		for frame_idx in range(n_frames):
 			t = frame_idx / fps + atraso_total
-			# print(f"Gerando frame {frame_idx} com t={t}")
 			img = make_frame(t, telemetria, kwargs=kw)
-			frame_data = img.tobytes()
-			
-			# Verificando o conteúdo dos frames gerados
-			# print(f"Frame {frame_idx}: {frame_data[:10]}...")  # Exibe apenas os primeiros 100 bytes para inspeção
-			
-			yield frame_data
-	# Produz uma sequência de frames no formato .raw para fins de depuração
-	# for frame_idx in range(n_frames):
-	# 	# Gera o frame
-	# 	t = frame_idx / fps + atraso_total
-	# 	frame_data = make_frame(t, telemetria, kwargs=kw)
-	# 	with open(f"frame{frame_idx:03d}.raw", "wb") as f:
-	# 		f.write(frame_data)
+			yield img.tobytes()
 
-
-
-	for frame_idx, frame_data in enumerate(tqdm(frame_generator(), total=n_frames, desc="Processando frames"), start=1):
+	# Envia os frames diretamente no stdin do ffmpeg com uma barra de progresso
+	for frame_data in tqdm(frame_generator(), total=n_frames, desc="Processando frames", unit="frame"):
 		try:
 			process_tel.stdin.write(frame_data)
 		except Exception as e:
-			warnings.warn(f"Erro ao escrever frame {frame_idx}: {e}")
-			break	
-		except BrokenPipeError:
-			print("Erro: ffmpeg fechou o pipe inesperadamente.")
+			warnings.warn(f"Erro ao escrever um frame: {e}")
 			break
 	process_tel.stdin.close()
-	process_tel.wait()
+
+	# Aguarda o ffmpeg terminar, garantindo que os buffers sejam esvaziados
+	try:
+		stdout_data, stderr_data = process_tel.communicate(timeout=60)
+	except Exception as e:
+		warnings.warn(f"Timeout ou erro no communicate(): {e}")
+		process_tel.kill()
+		stdout_data, stderr_data = process_tel.communicate()
+
+	if process_tel.returncode != 0:
+		warnings.warn(f"FFmpeg retornou código {process_tel.returncode}. Erro: {stderr_data.decode('utf-8', errors='replace')}")
+	else:
+		print("Arquivo auxiliar (VideoTelemetria.mp4) criado com sucesso.")
+
 	time.sleep(0.5)
 
+	#%% ========================================================== Compõe o vídeo e o arquivo auxiliar ==========================================================
+	print("Combinando vídeo e telemetrias")
+	# Cria o fluxo de vídeo principal (redimensionado)
+	video_stream = ffmpeg.input(video).filter("scale", video_area_width, altura)
+	# Cria o fluxo da telemetria a partir do arquivo auxiliar (já gerado)
+	telemetry_stream = ffmpeg.input("VideoTelemetria.mp4", format="mp4")
+	# Aplica o filtro de empilhamento horizontal
+	combined = ffmpeg.filter([video_stream, telemetry_stream], "hstack", inputs=2)
+	# Define a saída para o arquivo final
+	final = combined.output(output, f="mp4", vcodec="libx264", pix_fmt="yuv420p", movflags="+faststart").overwrite_output()
+	final.run()
 
-
-	#%% ========================================================== Compõe o vídeo e a telemetria ==========================================================
-	final = ffmpeg.filter([
-		ffmpeg.input(video).filter("scale", video_area_width, altura).output("pipe:", format="rawvideo", pix_fmt="rgba"),
-		ffmpeg.input("pipe:", format="rawvideo", pix_fmt="rgba", s=f"{telemetry_area_width}x{altura}", framerate=fps)
-	], "hstack", inputs=2)
-
-	out, err = (final.output(output, f="mp4", vcodec="libx264", pix_fmt="yuv420p", movflags="+faststart")
-		.overwrite_output()
-		.run(input=process_tel.stdout.read(), capture_stdout=True, capture_stderr=True)
-	)
-
-	print(err.decode())  # Exibir erro detalhado do ffmpeg
+	# print(err.decode())  # Exibir erro detalhado do ffmpeg
 
 
 
@@ -478,3 +480,6 @@ def gerar_telemetria_video(output, video, *telemetria, **kw):
 	# 		os.remove(temp_file_tel)
 	# 	except Exception as e:
 	# 		warnings.warn(f"Não foi possível remover o arquivo auxiliar {temp_file_tel} depois do processamento.")
+
+	#%% FIM DA FUNÇÃO
+	print("Geração do vídeo" + f"{output}" + "finalizada")

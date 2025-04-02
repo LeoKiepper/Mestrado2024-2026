@@ -14,12 +14,12 @@ from VideoTelemetria import gerar_telemetria_video
 b='MAC_aguas_claras_2025-01-21-12-07-24_0.bag'
 print('Lendo ' + b)
 b=bagreader( 'MAC_aguas_claras_2025-01-21-12-07-24_0.bag' )
-print('Bag lida. Criando telemetria')
+print('Bag lida. Criando a variável telemetria')
 telemetria = CriaTelemetria(b)
-print('Telemetria criada')
+print('Variável telemetria criada')
 
-#%%! Gera um vídeo de 10 segundos para propósito de desenvolvimento da função
-gerar_telemetria_video( "VideoTelemetria.mp4",
+#%% Gera um vídeo de 10 segundos para propósito de desenvolvimento da função e ajuste de parâmetros
+gerar_telemetria_video( "teste.mp4",
 	("Project 1.mp4", dict(
 		timestamp_video=1737471936.2761478
     )),
@@ -46,7 +46,7 @@ gerar_telemetria_video( "VideoTelemetria.mp4",
 			linewidth=1, alpha=0.7
 		)
 	) ),
-	atraso=-108.361, 
+	atraso=-108.361+2909.66, 
 	timestamp_tel=b.start_time, casasdec_tempo=3, printyvals='legend',
 	xlabel="Prévia [s]", facecolor="#fafafa", margem_ext=20, hspace=0.1,
 	temp_dir="D:\\", deleteaux=False, 

@@ -1,0 +1,18 @@
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: CTTS table of 240 entries
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: CTTS table of 239 entries
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
