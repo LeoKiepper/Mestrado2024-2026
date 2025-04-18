@@ -1,5 +1,4 @@
-# Reset e imports
-from bagpy import bagreader
+#%% Reset e imports
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,21 +6,16 @@ import math
 import gc
 from sklearn.model_selection import TimeSeriesSplit
 import re
+from telemetry import ResolveTel
+from VideoTelemetria import Gera_VideoTelemetria
 
 
-from telemetria import CriaTelemetria
-from VideoTelemetria import gerar_telemetria_video
-b='MAC_aguas_claras_2025-01-21-12-07-24_0.bag'
-print('Lendo ' + b)
-b=bagreader( 'MAC_aguas_claras_2025-01-21-12-07-24_0.bag' )
-print('Bag lida. Criando a variável telemetria')
-telemetria = CriaTelemetria(b)
-print('Variável telemetria criada')
+telemetria = ResolveTel('MAC_aguas_claras_2025-01-21-12-07-24_0.bag')
 
 #%% Gera um vídeo de 10 segundos para propósito de desenvolvimento da função e ajuste de parâmetros
-gerar_telemetria_video( "teste.mp4",
-	("Project 1.mp4", dict(
-		timestamp_video=1737471936.2761478
+Gera_VideoTelemetria( "teste.mp4",
+	("Project1.mp4", dict(
+		# timestamp_video=1737471936.2761478
     )),
 	( telemetria['T_CPU'], dict(
 		plotkw=dict(labels=['Temperatura da CPU'])
@@ -46,17 +40,17 @@ gerar_telemetria_video( "teste.mp4",
 			linewidth=1, alpha=0.7
 		)
 	) ),
-	atraso=-108.361+2909.66, 
-	timestamp_tel=b.start_time, casasdec_tempo=3, printyvals='legend',
+	atraso=-108.361+5, 
+	timestamp_tel=telemetria.timestamp_zero, casasdec_tempo=3, printyvals='legend',
 	xlabel="Prévia [s]", facecolor="#fafafa", margem_ext=20, hspace=0.1,
-	temp_dir="D:\\", deleteaux=False, 
+	# temp_dir="D:\\", deleteaux=False, 
 )
 
 #%% Gera o vídeo da telemetria completa
 # gerar_telemetria_video( "VideoTelemetria.mp4",
-# 	("itabira_galeria_oleo_frontal_jan-2025.mp4", dict(
+# 	( "itabira_galeria_oleo_frontal_jan-2025.mp4", dict(
 # 		timestamp_video=1737471936.2761478
-#     )),
+#     ) ),
 # 	( telemetria['T_CPU'], dict(
 # 		plotkw=dict(labels=['Temperatura da CPU'])
 # 	) ),
@@ -79,9 +73,8 @@ gerar_telemetria_video( "teste.mp4",
 # 			labels=['Vel. comandada','Vel. medida'],
 # 			linewidth=1, alpha=0.7
 # 		)
-# 	) ),
-# 	# atraso=-108.361, 
+# 	) ),	atraso=-108.361-96.192,
 # 	timestamp_tel=b.start_time, casasdec_tempo=3, printyvals='legend',
 # 	xlabel="Prévia [s]", facecolor="#fafafa", margem_ext=20, hspace=0.1,
-# 	temp_dir="D:\\", deleteaux=False, 
+# 	# temp_dir="D:\\", deleteaux=False,
 # )

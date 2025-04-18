@@ -1,4 +1,6 @@
-def gerar_telemetria_video(output, video, *telemetria, **kw):
+from telemetry import ResolveTel
+import re
+def Gera_VideoTelemetria(output, video, *telemetria, **kw):
 	"""
 	Gera um vídeo composto por:
 		- A parte esquerda: o vídeo original (possivelmente redimensionado)
@@ -54,6 +56,7 @@ def gerar_telemetria_video(output, video, *telemetria, **kw):
 	import threading
 	import queue
 	import subprocess
+	import json
 	def calcular_largura_yticklabels(*tels, **kwargs):
 			"""
 			Calcula a largura máxima necessária para acomodar os yticklabels de todas as telemetrias passadas,
@@ -257,10 +260,17 @@ def gerar_telemetria_video(output, video, *telemetria, **kw):
 		if not isinstance(video,str):														raise ValueError(f"Video: Quando definido em tuple, o primeiro elemento deve ser uma string com diretório/nome.")
 		if not isinstance(videokw,dict):													raise ValueError(f"Video: Quando definido em tuple, o segundo elemento deve ser um dicionário.")
 
+		# Primeiro carrega o timestamp informado nos metadados
+		meta = json.loads(subprocess.check_output([
+			"ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video
+		]).decode())
+		timestamp_video = meta.get("format", {}).get("tags", {}).get("timestamp_zero")	# Retorna None se a tag "timestamp" não estiver presente no arquivo
+		if timestamp_video is not None: timestamp_video = float(timestamp_video)
+
 		videokw_copy=videokw.copy()
 		args=[]
-		arg = "timestamp_video";	videokw[arg] = timestamp_video = videokw.get(arg, None);		err(f"{videokw[arg]} deve ser um número") 		if not inst(videokw[arg], (int,float)) and videokw[arg] is not None			else args.append(arg)
-		timestamp_video = float(timestamp_video)
+		arg = "timestamp_video";	videokw[arg] = timestamp_video = videokw.get(arg, timestamp_video);		err(f"{videokw[arg]} deve ser um número") 		if not inst(videokw[arg], (int,float)) and videokw[arg] is not None			else args.append(arg)
+		if timestamp_video is not None: timestamp_video = float(timestamp_video)
 		
 
 		for arg in args: videokw_copy.pop(arg) if arg in videokw_copy else None
@@ -377,20 +387,20 @@ def gerar_telemetria_video(output, video, *telemetria, **kw):
 						# bottom=(margem_inf)/altura 	
 					)
 
-	atraso_total=0
-	if timestamp_video is not None and timestamp_tel is not None: 		atraso_total=timestamp_tel-timestamp_video
-	atraso_total+=atraso
+	sinc=0
+	if timestamp_video is not None and timestamp_tel is not None: 		sinc=timestamp_tel-timestamp_video
+	atraso_total=sinc+atraso
 	atraso_total = round(atraso_total, casasdec_tempo)
 	# Depois de arredondado, crimpa atraso_total para zero quando dentro de uma tolerância para evitar imprimir timestamp +-0.00...
 	if abs(atraso_total) < 1*10**(-casasdec_tempo+1): 					atraso_total = 0
 
-
+	temp_file_tel = os.path.join(temp_dir, f"telemetria_aux.mp4")
 
 
 	#%% ======================================  Processa os frames em pipe para gerar o vídeo auxiliar da telemetria  ======================================
 	# # --------------------------------------------------------  Monitoramento do processo  --------------------------------------------------------
 	# def monitor_ffmpeg_stderr():
-	# 	while True:
+	# 	while True:	
 	# 		output = process_tel.stderr.readline()
 	# 		if output:
 	# 			# Abre uma nova janela do PowerShell para imprimir a saída do ffmpeg
@@ -403,7 +413,7 @@ def gerar_telemetria_video(output, video, *telemetria, **kw):
 	process_tel = (
 		ffmpeg
 		.input("pipe:0", format="rawvideo", pix_fmt="rgba", s=f"{telemetry_area_width}x{altura}", framerate=fps)
-		.output("VideoTelemetria.mp4", 
+		.output(temp_file_tel, 
 				format="mp4",
 				vcodec="libx264", 
 				pix_fmt="yuv420p", 
@@ -430,7 +440,7 @@ def gerar_telemetria_video(output, video, *telemetria, **kw):
 
 	def frame_generator():
 		for frame_idx in range(n_frames):
-			t = frame_idx / fps + atraso_total
+			t = frame_idx / fps - atraso_total
 			img = make_frame(t, telemetria, kwargs=kw)
 			yield img.tobytes()
 
@@ -454,7 +464,7 @@ def gerar_telemetria_video(output, video, *telemetria, **kw):
 	if process_tel.returncode != 0:
 		warnings.warn(f"FFmpeg retornou código {process_tel.returncode}. Erro: {stderr_data.decode('utf-8', errors='replace')}")
 	else:
-		print("Arquivo auxiliar (VideoTelemetria.mp4) criado com sucesso.")
+		print("Arquivo auxiliar " + f"{temp_file_tel}" + " criado com sucesso.")
 
 	time.sleep(0.5)
 
@@ -463,7 +473,7 @@ def gerar_telemetria_video(output, video, *telemetria, **kw):
 	# Cria o fluxo de vídeo principal (redimensionado)
 	video_stream = ffmpeg.input(video).filter("scale", video_area_width, altura)
 	# Cria o fluxo da telemetria a partir do arquivo auxiliar (já gerado)
-	telemetry_stream = ffmpeg.input("VideoTelemetria.mp4", format="mp4")
+	telemetry_stream = ffmpeg.input(temp_file_tel, format="mp4")
 	# Aplica o filtro de empilhamento horizontal
 	combined = ffmpeg.filter([video_stream, telemetry_stream], "hstack", inputs=2)
 	# Define a saída para o arquivo final
@@ -482,4 +492,77 @@ def gerar_telemetria_video(output, video, *telemetria, **kw):
 	# 		warnings.warn(f"Não foi possível remover o arquivo auxiliar {temp_file_tel} depois do processamento.")
 
 	#%% FIM DA FUNÇÃO
-	print("Geração do vídeo" + f"{output}" + "finalizada")
+	print("Geração do vídeo " + f"{output}" + " finalizada")
+
+
+
+#%% Resolve a variável "telemetria"
+telobj = ResolveTel('MAC_aguas_claras_2025-01-21-12-07-24_0.bag')
+telemetria=telobj.tel; timestamp_tel=telobj.timestamp_zero
+
+#%% Gera um vídeo de 10 segundos para propósito de desenvolvimento da função e ajuste de parâmetros
+Gera_VideoTelemetria( "teste.mp4",
+	("Project1.mp4", dict(
+		# timestamp_video=1737471936.2761478
+    )),
+	( telemetria['T_CPU'], dict(
+		plotkw=dict(labels=['Temperatura da CPU'])
+	) ),
+	( telemetria[['CPU_0','CPU_1','CPU_2','CPU_3','CPU_4','CPU_5','CPU_6','CPU_7']], dict(
+		plotkw=dict(
+			coltolabel_parser=lambda col: fr'$CPU_{{ {int(re.search(r"CPU_(\d+)", col).group(1)) + 1} }}$',
+			linewidth=0.5, alpha=0.7
+		),
+		legendkw=dict(ncol=3, loc="upper left")
+	) ),
+	( telemetria[['i_M1','i_M2','i_M3','i_M4']], dict(
+		plotkw=dict(
+			coltolabel_parser=lambda col: fr'$i_{{m {re.search(r"i_M(\d+)", col).group(1)} }}$',
+			linewidth=1
+		),
+		legendkw=dict(ncol=2, loc="upper left")
+	) ),
+	( telemetria[['cmd_vel','robot_vel']], dict(
+		plotkw=dict(
+			labels=['Vel. comandada','Vel. medida'],
+			linewidth=1, alpha=0.7
+		)
+	) ),
+	atraso=-108.361+5, 
+	timestamp_tel=timestamp_tel, casasdec_tempo=3, printyvals='legend',
+	xlabel="Prévia [s]", facecolor="#fafafa", margem_ext=20, hspace=0.1,
+	# temp_dir="D:\\", deleteaux=False, 
+)
+
+#%% Gera o vídeo da telemetria completa
+# gerar_telemetria_video( "VideoTelemetria.mp4",
+# 	( "itabira_galeria_oleo_frontal_jan-2025.mp4", dict(
+# 		timestamp_video=1737471936.2761478
+#     ) ),
+# 	( telemetria['T_CPU'], dict(
+# 		plotkw=dict(labels=['Temperatura da CPU'])
+# 	) ),
+# 	( telemetria[['CPU_0','CPU_1','CPU_2','CPU_3','CPU_4','CPU_5','CPU_6','CPU_7']], dict(
+# 		plotkw=dict(
+# 			coltolabel_parser=lambda col: fr'$CPU_{{ {int(re.search(r"CPU_(\d+)", col).group(1)) + 1} }}$',
+# 			linewidth=0.5, alpha=0.7
+# 		),
+# 		legendkw=dict(ncol=3, loc="upper left")
+# 	) ),
+# 	( telemetria[['i_M1','i_M2','i_M3','i_M4']], dict(
+# 		plotkw=dict(
+# 			coltolabel_parser=lambda col: fr'$i_{{m {re.search(r"i_M(\d+)", col).group(1)} }}$',
+# 			linewidth=1
+# 		),
+# 		legendkw=dict(ncol=2, loc="upper left")
+# 	) ),
+# 	( telemetria[['cmd_vel','robot_vel']], dict(
+# 		plotkw=dict(
+# 			labels=['Vel. comandada','Vel. medida'],
+# 			linewidth=1, alpha=0.7
+# 		)
+# 	) ),	atraso=-108.361-96.192,
+# 	timestamp_tel=b.start_time, casasdec_tempo=3, printyvals='legend',
+# 	xlabel="Prévia [s]", facecolor="#fafafa", margem_ext=20, hspace=0.1,
+# 	# temp_dir="D:\\", deleteaux=False,
+# )

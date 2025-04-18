@@ -1,18 +1,39 @@
 # import bagpy
-# from bagpy import bagreader
+from bagpy import bagreader
+from dataclasses import dataclass, fields
 import pandas as pd
-import re
-import bagpy
-def CriaTelemetria(bag, PlotarGráficos=False):
-	# Cria a variável "telemetria" a partir da bag selecionada acima
+import re, bagpy, os, pickle, hashlib, shutil, warnings, sys
+from IPython import get_ipython
+from warnings import warn
+# Override the standard warnings formatter
+warnings.formatwarning = lambda msg, cat, fn, ln, line=None: f"{cat.__name__}: {msg}\n"
 
+# Get the current IPython instance and override its warning display
+ip = get_ipython()
+if ip is not None:
+    ip.showwarning = lambda msg, cat, fn, ln, *args, **kwargs: sys.stderr.write(f"{cat.__name__}: {msg}\n")
+TELEMS_DIR = os.path.abspath('telems')
+BUILD_FLAG=0
+BAG_FILENAME=None
+if not os.path.exists(TELEMS_DIR):	os.makedirs(TELEMS_DIR)
+pickle_filename = lambda bagfile_name: TELEMS_DIR + '\\' + bagfile_name + '.telemetry.pkl'
+
+@dataclass
+class telclass:
+	tel: pd.DataFrame
+	timestamp_zero: float
+expected_fields = {f.name for f in fields(telclass)}
+
+def builder(bagfile, PlotarGraficos=False):
+	# Cria a variável "telemetria" a partir da bag informada
+	b=bagreader(bagfile)
 
 	# ===================== Desembaraça as mensagens salvas na bag =====================
 	# Temperatura da CPU
-	aux1 = bag.message_by_topic('/cpu_temp')
+	aux1 = b.message_by_topic('/cpu_temp')
 	aux1 = pd.read_csv(aux1)
 	aux1 = aux1.rename(columns={'data': 'T_CPU'})
-	aux1.Time = aux1.Time - bag.start_time
+	aux1.Time = aux1.Time - b.start_time
 
 	# # Corrente instantânea da bateria 1
 	# aux2 = b.message_by_topic('/espeleo_io/battery_1_signed_status')
@@ -47,28 +68,28 @@ def CriaTelemetria(bag, PlotarGráficos=False):
 	# aux5.Time = aux5.Time - b.start_time
 
 	# Corrente no motor 1
-	aux6 = bag.message_by_topic('/device1/get_current_actual_value')
+	aux6 = b.message_by_topic('/device1/get_current_actual_value')
 	aux6 = pd.read_csv(aux6)
 	aux6 = aux6.rename(columns={'data': 'i_M1'})
-	aux6.Time = aux6.Time - bag.start_time
+	aux6.Time = aux6.Time - b.start_time
 
 	# Corrente no motor 2
-	aux7 = bag.message_by_topic('/device3/get_current_actual_value')
+	aux7 = b.message_by_topic('/device3/get_current_actual_value')
 	aux7 = pd.read_csv(aux7)
 	aux7 = aux7.rename(columns={'data': 'i_M2'})
-	aux7.Time = aux7.Time - bag.start_time
+	aux7.Time = aux7.Time - b.start_time
 
 	# Corrente no motor 3
-	aux8 = bag.message_by_topic('/device4/get_current_actual_value')
+	aux8 = b.message_by_topic('/device4/get_current_actual_value')
 	aux8 = pd.read_csv(aux8)
 	aux8 = aux8.rename(columns={'data': 'i_M3'})
-	aux8.Time = aux8.Time - bag.start_time
+	aux8.Time = aux8.Time - b.start_time
 
 	# Corrente no motor 4
-	aux9 = bag.message_by_topic('/device6/get_current_actual_value')
+	aux9 = b.message_by_topic('/device6/get_current_actual_value')
 	aux9 = pd.read_csv(aux9)
 	aux9 = aux9.rename(columns={'data': 'i_M4'})
-	aux9.Time = aux9.Time - bag.start_time
+	aux9.Time = aux9.Time - b.start_time
 
 	# # Intensidade dos LEDs frontais
 	# aux10 = b.message_by_topic('/espeleo_io/frontLight')
@@ -85,27 +106,27 @@ def CriaTelemetria(bag, PlotarGráficos=False):
 	# aux11.Time = aux11.Time - b.start_time
 
 	# Porcentagem de utilizacao da CPU
-	aux12=bag.message_by_topic('/cpu_percent')
+	aux12=b.message_by_topic('/cpu_percent')
 	aux12=pd.read_csv(aux12)
 	aux12.rename(columns=lambda col: re.sub(r'^data_(\d+)$', r'CPU_\1', col), inplace=True)
 	aux12.drop(['layout.dim','layout.data_offset'],axis=1,inplace=True)
-	aux12.Time = aux12.Time - bag.start_time
+	aux12.Time = aux12.Time - b.start_time
 
 	# Resolve o número de CPUs
 	NumCPUs=len(aux12.columns)-1    # Se for rodado depois de retirar colunas de layout
 
 
-	aux13 = bag.message_by_topic('/cmd_vel')
+	aux13 = b.message_by_topic('/cmd_vel')
 	aux13 = pd.read_csv(aux13)
 	aux13.drop(['linear.y','linear.z','angular.x','angular.y','angular.z'],axis=1,inplace=True)
 	aux13 = aux13.rename(columns={'linear.x': 'cmd_vel'})
-	aux13.Time = aux13.Time - bag.start_time
+	aux13.Time = aux13.Time - b.start_time
 
-	aux14 = bag.message_by_topic('/robot_vel')
+	aux14 = b.message_by_topic('/robot_vel')
 	aux14 = pd.read_csv(aux14)
 	aux14 = aux14.rename(columns={'linear.x': 'robot_vel'})
 	aux14.drop(['linear.y','linear.z','angular.x','angular.y','angular.z'],axis=1,inplace=True)
-	aux14.Time = aux14.Time - bag.start_time
+	aux14.Time = aux14.Time - b.start_time
 
 	# Monta um DataFrame consolidando todas as variáveis
 	# telemetria=pd.merge_ordered(aux1,aux2,on='Time',how='outer')
@@ -155,7 +176,7 @@ def CriaTelemetria(bag, PlotarGráficos=False):
 	# del aux1, aux2, aux3, aux4, aux5, aux6, aux7, aux8, aux9, aux10, aux11, aux12
 
 
-	if PlotarGráficos:
+	if PlotarGraficos:
 		# ===================== Plota a telemetria extraída da bag e a média móvel da temperatura da CPU =====================
 		fig, ax = bagpy.create_fig(1)
 		ax=ax[0]
@@ -214,5 +235,89 @@ def CriaTelemetria(bag, PlotarGráficos=False):
 		ax.grid(which='major', color='#e0e0e0', linewidth=1.5)
 		ax.grid(which='minor', color='#f0f0f0', linewidth=1)
 		fig.savefig("TelemetryVel.svg", format='svg')
+	
+	return telclass(
+		tel=telemetria,
+		timestamp_zero=b.start_time
+	)
+def __CalcBagHash(bagfile):
+    hash_md5 = hashlib.md5()  # No security concerns, choose md5
+    with open(bagfile, 'rb') as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+	
+	
+    return hash_md5.hexdigest()
+def __LoadTelemetry(bagfile):
+	try:										
+		with open(pickle_filename(BAG_FILENAME), 'rb') as f: var = pickle.load(f)
+	except FileNotFoundError as e:						warn("Pickle file not found."); return BUILD_FLAG
+	except pickle.UnpicklingError as e:					warn("Failed to unpickle the file."); return BUILD_FLAG
+	except EOFError as e:								warn("Incomplete or corrupted pickle file."); return BUILD_FLAG
+	except AttributeError as e:							warn("Error accessing saved object attributes."); return BUILD_FLAG
+	except ImportError as e:							warn("Missing module required to load pickle."); return BUILD_FLAG
+	except IndexError as e:								warn("Index error while loading pickle."); return BUILD_FLAG
+	except TypeError as e:								warn("Type error while loading pickle."); return BUILD_FLAG
+	if not isinstance(var, dict): 						warn("Object structure not recognized."); return BUILD_FLAG
+	if not isinstance(baghash := var['baghash'], str):	warn("Loaded bag file hash in unexpected format."); return BUILD_FLAG
+	if not isinstance(tel := var['tel'], telclass):			warn("tel in unexpected format."); return BUILD_FLAG
+	if not set(vars(tel).keys()) == expected_fields: 	warn("tel fields do not match expected structure."); return BUILD_FLAG
+	if not baghash == __CalcBagHash(bagfile):			warn("Hash mismatch detected."); return BUILD_FLAG
+	
+	
+	return tel
+def __ValidateBagfile(bagfile):
+	if not isinstance(bagfile, str): 					raise ValueError('bagfile must be a file name')
+	global BAG_FILENAME
+	BAG_FILENAME = os.path.splitext(os.path.basename(bagfile))[0]
+	bagfile_in_telems = os.path.join(TELEMS_DIR, BAG_FILENAME + '.bag')
+	bagfile_dir = os.path.abspath(os.path.dirname(bagfile))
+	if os.path.exists(bagfile):
+		if os.path.exists(bagfile_in_telems):
+			if bagfile_dir!=TELEMS_DIR:
+				if __CalcBagHash(bagfile_in_telems) == __CalcBagHash(bagfile):
+					warn(f"Specified bag file is duplicated in {TELEMS_DIR} and will be used instead.")
+					bagfile=bagfile_in_telems
+				else:
+					print(f"A different bag file was found in {TELEMS_DIR} with the same name. Which bag should be used?")
+					print(f"	1. {bagfile_in_telems}")
+					print(f"	2. {bagfile}")
+					whichbag = input()
+					if whichbag!='2': bagfile = bagfile_in_telems
+		else:
+			print(f'Bag file is not in the expected directory. Move to {TELEMS_DIR} ?')
+			move = input('y/[n]')
+			if move == 'y': 	
+				try: 
+					shutil.move(bagfile, bagfile_in_telems)
+					bagfile = bagfile_in_telems
+				except: 	warn('Move failed')
+	else:
+		if os.path.exists(bagfile_in_telems): bagfile=bagfile_in_telems
+		else: raise FileNotFoundError("Bag file not found.")
+	return bagfile
+def __SaveTelemetry(tel,bagfile):
+	savedata = {
+		"baghash": __CalcBagHash(bagfile),
+		"tel": tel
+	}
 
-	return telemetria
+	with open(pickle_filename(BAG_FILENAME), "wb") as f:
+		pickle.dump(savedata, f)
+def ResolveTel(bagfile):
+	"""
+		Loads or creates a DataFrame variable converted from the specified bag file
+	"""
+	#%% ========================================================================  Input validation
+	bagfile = __ValidateBagfile(bagfile)
+
+	#%% ========================================================================  Attempts to load telemetry 
+	tel = __LoadTelemetry(bagfile)
+	if tel == BUILD_FLAG: 
+		warn("Telemetry build required.")
+		tel = builder(bagfile)
+		__SaveTelemetry(tel,bagfile)
+	else: print('Found valid .pkl file')
+
+	#%% End of function
+	return tel
