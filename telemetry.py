@@ -10,8 +10,7 @@ warnings.formatwarning = lambda msg, cat, fn, ln, line=None: f"{cat.__name__}: {
 
 # Get the current IPython instance and override its warning display
 ip = get_ipython()
-if ip is not None:
-    ip.showwarning = lambda msg, cat, fn, ln, *args, **kwargs: sys.stderr.write(f"{cat.__name__}: {msg}\n")
+if ip is not None: ip.showwarning = lambda msg, cat, fn, ln, *args, **kwargs: sys.stderr.write(f"{cat.__name__}: {msg}\n")
 TELEMS_DIR = os.path.abspath('telems')
 BUILD_FLAG=0
 BAG_FILENAME=None
