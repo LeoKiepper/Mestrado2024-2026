@@ -165,7 +165,7 @@ telemetria=tel.tel; timestamp_tel=tel.timestamp_zero
 
 sys.exit()
 
-# ===================== Plota a telemetria extraída da bag e a média móvel da temperatura da CPU =====================
+#%% Plota a telemetria extraída da bag e a média móvel da temperatura da CPU
 fig, ax = bagpy.create_fig(1)
 ax=ax[0]
 ax.plot('T_CPU',     data = telemetria,       linewidth=0.8)
