@@ -73,3 +73,14 @@ telems/MAC_aguas_claras_2025-01-21-12-07-24_0/device4-get_current_actual_value.c
 telems/MAC_aguas_claras_2025-01-21-12-07-24_0/device6-get_current_actual_value.csv
 telems/MAC_aguas_claras_2025-01-21-12-07-24_0/robot_vel.csv
 telemetria_aux.mp4
+cache/MAC_aguas_claras_2025-01-21-12-07-24_0.telemetry.pkl
+cache/MAC_aguas_claras_2025-01-21-12-07-24_0/cmd_vel.csv
+cache/MAC_aguas_claras_2025-01-21-12-07-24_0/cpu_percent.csv
+cache/MAC_aguas_claras_2025-01-21-12-07-24_0/cpu_temp.csv
+cache/MAC_aguas_claras_2025-01-21-12-07-24_0/device1-get_current_actual_value.csv
+cache/MAC_aguas_claras_2025-01-21-12-07-24_0/device3-get_current_actual_value.csv
+cache/MAC_aguas_claras_2025-01-21-12-07-24_0/device4-get_current_actual_value.csv
+cache/MAC_aguas_claras_2025-01-21-12-07-24_0/device6-get_current_actual_value.csv
+cache/MAC_aguas_claras_2025-01-21-12-07-24_0/robot_vel.csv
+__pycache__/tellib.cpython-313.pyc
+__pycache__/tellib.cpython-313.pyc

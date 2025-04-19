@@ -165,6 +165,68 @@ telemetria=tel.tel; timestamp_tel=tel.timestamp_zero
 
 sys.exit()
 
+# ===================== Plota a telemetria extraída da bag e a média móvel da temperatura da CPU =====================
+fig, ax = bagpy.create_fig(1)
+ax=ax[0]
+ax.plot('T_CPU',     data = telemetria,       linewidth=0.8)
+ax.set_ylabel('Temperatura da CPU  '+r'$[°C]$')
+ax.set_xlabel('Tempo '+r'$[s]$')
+ax.set_facecolor('#fafafa')
+ax.grid(which='major', color='#e0e0e0', linewidth=1.5)
+ax.grid(which='minor', color='#f0f0f0', linewidth=1)
+fig.savefig("TelemetryTemperature.svg", format='svg')
+
+# ax[1].plot('i_B1',      data = telemetria,	  label = r'$i_{B1}$',                linewidth=0.8)
+# ax[1].plot('i_B2',      data = telemetria,      label = r'$i_{B2}$',                linewidth=0.8)
+# ax[1].plot('i_B1_avg',  data = telemetria,      label = r'$\overline{i}_{B1}$',     linewidth=2)
+# ax[1].plot('i_B2_avg',  data = telemetria,      label = r'$\overline{i}_{B2}$',     linewidth=2)
+# ax[1].set_ylabel('Corrente da bateria '+r'$[mA]$')
+fig, ax = bagpy.create_fig(1)
+ax=ax[0]
+ax.plot('i_M1',      data = telemetria,      label = r'$i_{M1}$',                linewidth=0.8)
+ax.plot('i_M2',      data = telemetria,      label = r'$i_{M2}$',                linewidth=0.8)
+ax.plot('i_M3',      data = telemetria,      label = r'$i_{M3}$',                linewidth=0.8)
+ax.plot('i_M4',      data = telemetria,      label = r'$i_{M4}$',                linewidth=0.8)
+ax.set_ylabel('Corrente do motor '+r'$[mA]$')
+ax.legend(fontsize=18)
+ax.set_xlabel('Tempo '+r'$[s]$')
+ax.set_facecolor('#fafafa')
+ax.grid(which='major', color='#e0e0e0', linewidth=1.5)
+ax.grid(which='minor', color='#f0f0f0', linewidth=1)
+fig.savefig("TelemetryMotors.svg", format='svg')
+
+# ax[3].plot('LED_F',     data = telemetria,      label = r'$LED_{F}$',               linewidth=2, alpha=0.7)
+# ax[3].plot('LED_B',     data = telemetria,      label = r'$LED_{B}$',               linewidth=2, alpha=0.7)
+# ax[3].set_ylabel('Carga '+r'$[\%]$')
+fig, ax = bagpy.create_fig(1)
+ax=ax[0]
+for CPU in range(NumCPUs):
+	# kw = dict(linewidth=0.8) if CPU == 0 else dict(alpha=0.6, linewidth=0, linestyle=None, marker='o', markersize=1)
+	kw=dict(linewidth=0.8)
+	ax.plot(f'CPU_{CPU}', data = telemetria, label = fr'$CPU_{{{CPU+1}}}$', **kw)
+ax.set_ylabel('Utilização da CPU '+r'$[\%]$')
+ax.legend(fontsize=18,markerscale=5)
+ax.set_xlabel('Tempo '+r'$[s]$')
+ax.set_facecolor('#fafafa')
+ax.grid(which='major', color='#e0e0e0', linewidth=1.5)
+ax.grid(which='minor', color='#f0f0f0', linewidth=1)
+fig.savefig("TelemetryCPU.svg", format='svg')
+
+fig, ax = bagpy.create_fig(1)
+ax=ax[0]
+ax.plot('cmd_vel',      data = telemetria,      label = 'comandada',                linewidth=0.8)
+ax.plot('robot_vel',      data = telemetria,      label = 'medida',                linewidth=0.8)
+ax.set_ylabel('Velocidade')
+ax.legend(fontsize=18)
+ax.set_xlabel('Tempo '+r'$[s]$')
+ax.set_facecolor('#fafafa')
+ax.grid(which='major', color='#e0e0e0', linewidth=1.5)
+ax.grid(which='minor', color='#f0f0f0', linewidth=1)
+fig.savefig("TelemetryVel.svg", format='svg')
+
+del ax, fig
+gc.collect()
+
 #%% Gera um vídeo de 10 segundos para propósito de desenvolvimento da função e ajuste de parâmetros
 Gera_VideoTelemetria( "teste.mp4",
 	("Project1.mp4", dict(
@@ -198,3 +260,36 @@ Gera_VideoTelemetria( "teste.mp4",
 	xlabel="Prévia [s]", facecolor="#fafafa", margem_ext=20, hspace=0.1,
 	# temp_dir="D:\\", deleteaux=False, 
 )
+
+#%% Gera o vídeo da telemetria completa
+# gerar_telemetria_video( "VideoTelemetria.mp4",
+# 	( "itabira_galeria_oleo_frontal_jan-2025.mp4", dict(
+# 		timestamp_video=1737471936.2761478
+#     ) ),
+# 	( telemetria['T_CPU'], dict(
+# 		plotkw=dict(labels=['Temperatura da CPU'])
+# 	) ),
+# 	( telemetria[['CPU_0','CPU_1','CPU_2','CPU_3','CPU_4','CPU_5','CPU_6','CPU_7']], dict(
+# 		plotkw=dict(
+# 			coltolabel_parser=lambda col: fr'$CPU_{{ {int(re.search(r"CPU_(\d+)", col).group(1)) + 1} }}$',
+# 			linewidth=0.5, alpha=0.7
+# 		),
+# 		legendkw=dict(ncol=3, loc="upper left")
+# 	) ),
+# 	( telemetria[['i_M1','i_M2','i_M3','i_M4']], dict(
+# 		plotkw=dict(
+# 			coltolabel_parser=lambda col: fr'$i_{{m {re.search(r"i_M(\d+)", col).group(1)} }}$',
+# 			linewidth=1
+# 		),
+# 		legendkw=dict(ncol=2, loc="upper left")
+# 	) ),
+# 	( telemetria[['cmd_vel','robot_vel']], dict(
+# 		plotkw=dict(
+# 			labels=['Vel. comandada','Vel. medida'],
+# 			linewidth=1, alpha=0.7
+# 		)
+# 	) ),	atraso=-108.361-96.192,
+# 	timestamp_tel=b.start_time, casasdec_tempo=3, printyvals='legend',
+# 	xlabel="Prévia [s]", facecolor="#fafafa", margem_ext=20, hspace=0.1,
+# 	# temp_dir="D:\\", deleteaux=False,
+# )
