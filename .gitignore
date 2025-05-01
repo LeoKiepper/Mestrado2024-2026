@@ -84,3 +84,5 @@ cache/MAC_aguas_claras_2025-01-21-12-07-24_0/device6-get_current_actual_value.cs
 cache/MAC_aguas_claras_2025-01-21-12-07-24_0/robot_vel.csv
 __pycache__/tellib.cpython-313.pyc
 __pycache__/tellib.cpython-313.pyc
+VideoTelemetria.code-workspace
+VideoTelemetria.vlclog.txt

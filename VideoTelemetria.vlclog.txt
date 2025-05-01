@@ -6574,3 +6574,263 @@ main warning: picture is too late to be displayed (missing 40 ms)
 qt warning: orphaned video window
 direct3d11 error: SetThumbNailClip failed: 0x800706f4
 -- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: elst box found
+mp4 warning: STTS table of 2 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+qt warning: orphaned video window
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: elst box found
+mp4 warning: STTS table of 39 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+main warning: playback too early (-61240): down-sampling
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+qt warning: orphaned video window
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: elst box found
+mp4 warning: STTS table of 2 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+qt warning: orphaned video window
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: CTTS table of 4667 entries
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+main warning: picture is too late to be displayed (missing 24 ms)
+qt warning: orphaned video window
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: CTTS table of 953 entries
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: CTTS table of 1308 entries
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 9002 entries
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+d3d11va warning: surface dimensions (1920x1088) differ from avcodec dimensions (1920x1080)
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+qt warning: orphaned video window
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: CTTS table of 12787 entries
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+qt warning: orphaned video window
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: STTS table of 1 entries
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+qt warning: orphaned video window
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: STTS table of 1 entries
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+qt warning: orphaned video window
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: STTS table of 1 entries
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+qt warning: orphaned video window
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: STTS table of 1 entries
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+qt warning: orphaned video window
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: CTTS table of 4364 entries
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+qt warning: orphaned video window
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: elst box found
+mp4 warning: STTS table of 2 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+qt warning: orphaned video window
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: elst box found
+mp4 warning: STTS table of 2 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
+﻿-- logger module started --
+main: one instance mode ENABLED
+main: Executando o VLC com a interface padrão. Use 'cvlc' para usar o VLC sem interface.
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+mp4 warning: elst box found
+mp4 warning: STTS table of 1 entries
+faad warning: decoded zero sample
+avcodec: Using D3D11VA (Intel(R) HD Graphics 630, vendor 8086(Intel), device 591b, revision 4) for hardware decoding
+direct3d11 error: SetThumbNailClip failed: 0x800706f4
+-- logger module stopped --
