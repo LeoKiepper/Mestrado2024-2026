@@ -159,7 +159,7 @@ def builder(self, bagfile):
 		tel=telemetria,
 		timestamp_zero=b.start_time
 	)
-telobj = type("TP_type", (tellib.telprocessor,), {"builder": builder})('MAC_aguas_claras_2025-01-21-12-07-24_0.bag')
+telobj = type("TP_type", (tellib.telprocessor,), {"builder": builder})('MAC_aguas_claras_2025-05-08-16-54-36_0.bag')
 tel = telobj.get()
 telemetria=tel.tel; timestamp_tel=tel.timestamp_zero
 

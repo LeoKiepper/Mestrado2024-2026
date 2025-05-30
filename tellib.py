@@ -211,25 +211,25 @@ class telprocessor(ABC):
 			pickle.dump(savedata, f)
 	def _LoadTelemetry(self):
 		try: var = pickle.load(open(self._picklefile, 'rb'))
-		except FileNotFoundError as e:										warn("Pickle file not found."); return False
-		except pickle.UnpicklingError as e:									warn("Failed to unpickle the file."); return False
-		except EOFError as e:												warn("Incomplete or corrupted pickle file."); return False
-		except AttributeError as e:											warn("Error accessing saved object attributes."); return False
-		except ImportError as e:											warn("Missing module required to load pickle."); return False
-		except IndexError as e:												warn("Index error while loading pickle."); return False
-		except TypeError as e:												warn("Type error while loading pickle."); return False
-		if not isinstance(var, dict): 										warn("Object structure not recognized."); return False
-		if 'baghash' not in var:                 							warn("Missing bag hash in pickle file."); return False
-		if not isinstance(loadedbaghash := var['baghash'], str):			warn("Loaded bag file hash in unexpected format."); return False
-		if 'builderhash' not in var:                 						warn("Missing builder hash in pickle file."); return False
-		if not isinstance(loadedbuilderhash := var['builderhash'], str):	warn("Loaded builder hash in unexpected format."); return False
-		if 'tel' not in var:                 								warn("Missing telemetry in pickle file."); return False
-		if not isinstance(loadedtel := var['tel'], telclass):				warn("tel in unexpected format."); return False
-		if not set(vars(loadedtel).keys()) == expected_fields: 				warn("tel fields do not match expected structure."); return False
-		if not loadedbaghash == self.baghash:								warn("Mismatch detected in bag file hash."); return False
-		if not loadedbuilderhash == self._builderhash:						warn("Mismatch detected in builder hash."); return False
+		except FileNotFoundError as e:										print("[INFO]  Pickle file not found."); return False
+		except pickle.UnpicklingError as e:									print("[INFO]  Failed to unpickle the file."); return False
+		except EOFError as e:												print("[INFO]  Incomplete or corrupted pickle file."); return False
+		except AttributeError as e:											print("[INFO]  Error accessing saved object attributes."); return False
+		except ImportError as e:											print("[INFO]  Missing module required to load pickle."); return False
+		except IndexError as e:												print("[INFO]  Index error while loading pickle."); return False
+		except TypeError as e:												print("[INFO]  Type error while loading pickle."); return False
+		if not isinstance(var, dict): 										print("[INFO]  Object structure not recognized."); return False
+		if 'baghash' not in var:                 							print("[INFO]  Missing bag hash in pickle file."); return False
+		if not isinstance(loadedbaghash := var['baghash'], str):			print("[INFO]  Loaded bag file hash in unexpected format."); return False
+		if 'builderhash' not in var:                 						print("[INFO]  Missing builder hash in pickle file."); return False
+		if not isinstance(loadedbuilderhash := var['builderhash'], str):	print("[INFO]  Loaded builder hash in unexpected format."); return False
+		if 'tel' not in var:                 								print("[INFO]  Missing telemetry in pickle file."); return False
+		if not isinstance(loadedtel := var['tel'], telclass):				print("[INFO]  tel in unexpected format."); return False
+		if not set(vars(loadedtel).keys()) == expected_fields: 				print("[INFO]  tel fields do not match expected structure."); return False
+		if not loadedbaghash == self.baghash:								print("[INFO]  Mismatch detected in bag file hash."); return False
+		if not loadedbuilderhash == self._builderhash:						print("[INFO]  Mismatch detected in builder hash."); return False
 		
-		print('Found a valid .pkl file. Telemetry loaded successfully.')
+		print('[INFO]  Found a valid .pkl file. Telemetry loaded successfully.')
 		return loadedtel
 	def get(self):
 		"""
@@ -239,9 +239,9 @@ class telprocessor(ABC):
 
 		tel = self._LoadTelemetry()
 		if not tel: 
-			warn("Telemetry build required.")
+			print("[INFO]  Telemetry build required.")
 			self.tel = tel = self.builder(self.bagfile)
-			print('Telemetry build finished.')
+			print('[INFO]  Telemetry build finished.')
 			self._SaveTelemetry()
 		return tel
 
