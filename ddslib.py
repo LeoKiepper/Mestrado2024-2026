@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 from typing import Callable, List
+from matplotlib.animation import FuncAnimation
 class FunctionWrapper(ABC):
 	def __init__(self):
 		"""
@@ -248,33 +249,49 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 	class Plotter:
 		from matplotlib.figure import Figure
 		from matplotlib.axes import Axes
-		def update(self):			
-			data = self.data_source()
-			self.line.set_xdata(list(range(len(data))))
-			self.line.set_ydata(data)
-			self.ax.relim()
-			self.ax.autoscale_view(scalex=False, scaley=True)
-			self.fig.canvas.draw()
-			self.fig.canvas.flush_events()
-			plt.pause(self.update_interval)
-		def start(self):
-			self.fig, self.ax = plt.subplots(1)
-			# self._set_topmost(self.fig)
-			data = self.data_source()
-			self.line, = self.ax.plot(data)
-			self.ax.set_xlim(0,len(data)-1)
-			self.ax.relim()
-			self.ax.autoscale_view(scalex=False, scaley=True)
-			plt.ion()
-		def stop(self):
-			plt.ioff()
 
-		def __init__(self, data_source: Callable[[], List[float]], update_interval: float = 0.01):
+		def __init__(self, data_source: Callable[[], List[float]], update_interval: float = 0.1):
 			self.data_source = data_source
-			self.update_interval = update_interval
+			self.update_interval = update_interval  # intervalo em ms para FuncAnimation
 			self.fig = None
 			self.ax = None
 			self.line = None
+			self.ani = None
+			self._next_update = None
+
+		def _update(self, frame=None):
+			data = self.data_source()
+			self.line.set_ydata(data)
+			self.ax.relim()
+			self.ax.autoscale_view(scalex=False, scaley=True)
+			return (self.line,)
+
+		def start(self):
+			self.fig, self.ax = plt.subplots(1)
+			data = self.data_source()
+			self.line, = self.ax.plot(data, animated=True)
+			self.ax.set_xlim(0, len(data) - 1)
+			self.ax.relim()
+			self.ax.autoscale_view(scalex=False, scaley=True)
+			plt.ion()
+			self.ani = FuncAnimation(
+				self.fig,
+				self._update,
+				interval=self.update_interval*1000,
+				blit=True
+			)
+			plt.show(block=False)
+			self._next_update = time.time() + self.update_interval
+		def stop(self):
+			if self.ani:
+				self.ani.event_source.stop()
+			plt.ioff()
+		def tick(self):
+			now = time.time()
+			if now >= self._next_update:
+				self.ani._step()
+				self.fig.canvas.flush_events()
+				self._next_update = now + self.update_interval
 	class StopConditions:
 		MAX_ITERATIONS = 1 << 0
 		MIN_LOSS      = 1 << 1
@@ -357,7 +374,8 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			self._model._kernel.set_model_parameters(next_params)
 			self.current_iteration += 1
 			pbar.update(1)
-			self.plotter.update()
+			# self.plotter._update()
+
 		pbar.close()
 		self.plotter.stop()
 		self._model._kernel.set_model_parameters(best_params)
