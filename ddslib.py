@@ -1,25 +1,19 @@
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib; matplotlib.use('QtAgg')
-from collections.abc import Iterable
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from sklearn.metrics import root_mean_squared_error
-import inspect
-import warnings
+import inspect, ast, textwrap, warnings
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.utils.validation import check_X_y, check_array
 from sklearn.linear_model import SGDRegressor
 from sklearn.model_selection import GridSearchCV
-import math
+import math, time
 from tqdm.auto import tqdm
-import plotext as plt2
-import sys
-import threading
-import time
 from typing import Callable, List
+from types import SimpleNamespace
+import numpy as np, pandas as pd, matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from matplotlib.container import StemContainer
+import matplotlib; matplotlib.use('QtAgg')
 class FunctionWrapper(ABC):
 	def __init__(self):
 		"""
@@ -249,36 +243,109 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 	class Plotter:
 		from matplotlib.figure import Figure
 		from matplotlib.axes import Axes
+		@staticmethod
+		def infer_score_ylabel(score_fn):
+			SCORING_LABELS = {
+				'root_mean_squared_error': 'RMSE',
+				'mean_absolute_error': 'MAE',
+				'mean_squared_error': 'MSE',
+				'mean_absolute_percentage_error': 'MAPE',
+			}
+			source = inspect.getsource(score_fn)
+			source_dedented = textwrap.dedent(source)
+			tree = ast.parse(source_dedented)
 
-		def __init__(self, data_source: Callable[[], List[float]], update_interval: float = 0.1):
+			for node in ast.walk(tree):
+				if isinstance(node, ast.Call):
+					if isinstance(node.func, ast.Name):
+						name = node.func.id
+					elif isinstance(node.func, ast.Attribute):
+						name = node.func.attr
+					else:
+						continue
+					for key, label in SCORING_LABELS.items():
+						if key.lower() in name.lower():
+							return label
+			return "Score"
+		@classmethod
+		def getplotstlye(cls,ind):
+			plotstyle={'ICAR2025': (lambda lang: SimpleNamespace(
+				score_history_title = 'Score history',
+				score_history_title_fontsize = 12,
+				score_history_xlabel = 'Iterations',
+				score_history_xlabel_fontsize = 12,
+				score_history_ylabel = cls.infer_score_ylabel(M2Optimizer.score),
+				score_history_ylabel_fontsize = 12,
+				))('en')
+				}
+			return plotstyle[ind]
+
+		def __init__(self, data_source: Callable[[], List[float]], best_model_getter: callable = None, update_interval: float = 0.1, plotstyle={}):
 			self.data_source = data_source
 			self.update_interval = update_interval  # intervalo em ms para FuncAnimation
 			self.fig = None
 			self.ax = None
-			self.line = None
+			self.data_line = None
 			self.ani = None
 			self._next_update = None
-
+			self.best_model_getter = best_model_getter
+			self.best_score_line_updater = lambda: None
+			self.best_iter_stem_updater = lambda: None
+			self.plotstyle = plotstyle
 		def _update(self, frame=None):
 			data = self.data_source()
-			self.line.set_ydata(data)
+			self.data_line.set_ydata(data)
+			self.best_score_line_updater()
+			self.best_iter_stem_updater()
 			self.ax.relim()
 			self.ax.autoscale_view(scalex=False, scaley=True)
-			return (self.line,)
-
+			return (
+				self.data_line,
+				self.best_score_line,
+				self.best_iter_stem.markerline,
+				self.best_iter_stem.stemlines
+			)
 		def start(self):
 			self.fig, self.ax = plt.subplots(1)
 			data = self.data_source()
-			self.line, = self.ax.plot(data, animated=True)
+			if self.best_model_getter is not None:
+				_,self._best_score,self._best_iter = self.best_model_getter()
+				self.best_score_line = self.ax.axhline(self._best_score)
+				self.best_score_line.set_animated(True)
+				def best_score_updater():
+					self.best_score_line.set_ydata([self._best_score]*2)
+				self.best_score_line_updater = best_score_updater
+				self.best_iter_stem = self.ax.stem(self._best_iter,self._best_score)
+				self.best_iter_stem.markerline.set_animated(True)
+				self.best_iter_stem.stemlines.set_animated(True)
+				def best_stem_updater():
+					x, y = self._best_iter, self._best_score
+					self.best_iter_stem.markerline.set_data([x], [y])
+					self.best_iter_stem.stemlines.set_segments([[(x, 0), (x, y)]])
+				self.best_iter_stem_updater = best_stem_updater
+			self.data_line, = self.ax.plot(data, animated=True)
 			self.ax.set_xlim(0, len(data) - 1)
 			self.ax.relim()
 			self.ax.autoscale_view(scalex=False, scaley=True)
+			ps = self.plotstyle
+			self.ax.set_xlabel(ps.score_history_xlabel, fontsize=ps.score_history_xlabel_fontsize)
+			self.ax.set_ylabel(ps.score_history_ylabel, fontsize=ps.score_history_ylabel_fontsize)
+			self.ax.set_title(ps.score_history_title, fontsize = ps.score_history_title_fontsize)
+			self.ax.grid(which='major', color='#e0e0e0', linewidth=1.5)
+			self.ax.grid(which='minor', color='#f0f0f0', linewidth=1, ls='--')
+			self.ax.set_facecolor('#fafafa')
+			# self.ax.legend()
+			# ax.plot(df['T_CPU'], label='Reference', lw=1)
+			# ax.plot(pred, label='Prediction', lw=2)
+			# ax.set_ylabel('CPU temperature '+r'$[°C]$', fontsize=14)
+			# ax.set_xlabel('Time [s]', fontsize=14)
 			plt.ion()
 			self.ani = FuncAnimation(
 				self.fig,
 				self._update,
 				interval=self.update_interval*1000,
-				blit=True
+				blit=True,
+				save_count=int(round(1/self.update_interval))
 			)
 			plt.show(block=False)
 			self._next_update = time.time() + self.update_interval
@@ -289,54 +356,81 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		def tick(self):
 			now = time.time()
 			if now >= self._next_update:
-				self.ani._step()
-				self.fig.canvas.flush_events()
+				time.sleep(1/self.update_interval)
 				self._next_update = now + self.update_interval
 	class StopConditions:
-		MAX_ITERATIONS = 1 << 0
-		MIN_LOSS      = 1 << 1
-		AVG_GRADIENT  = 1 << 2
-		
+		GLOBAL_MAX_ITERATIONS 		= 1 << 0
+		GLOBAL_MIN_LOSS      		= 1 << 1
+		STALE_PATH_AVG_GRADIENT  	= 1 << 2
+		STALE_PATH_MAX_ITER			= 1 << 3
+
 		@classmethod
-		def _compute_code(cls, obj):
+		def compute_flags(cls, obj):
 			code = 0
-			if obj.current_iteration == obj.max_iter:		code |= cls.MAX_ITERATIONS
-			if abs(obj._loss_history[-1]) <= obj.min_loss:	code |= cls.MIN_LOSS
-			if abs(obj._loss_gradient()) <= obj.tol:		code |= cls.AVG_GRADIENT
+			if obj.current_iteration == obj.max_iter:							code |= cls.GLOBAL_MAX_ITERATIONS
+			if abs(obj._loss_history[-1]) <= abs(obj.min_loss):					code |= cls.GLOBAL_MIN_LOSS
+			if abs(obj._loss_gradient()) <= obj.tol:							code |= cls.STALE_PATH_AVG_GRADIENT
+			if obj.iterations_on_this_path == obj.max_iter_on_same_path:		code |= cls.STALE_PATH_MAX_ITER
 			return code
 		@classmethod
-		def compose(cls, selected_flags, composition):
-			if not cls.validate(selected_flags) or composition not in ('any', 'all'):
+		def compose_training_stop_function(cls, selected_flags, composition) -> callable:
+			if not cls.validate_flags(selected_flags) or composition not in ('any', 'all'):
 				raise ValueError("Invalid compose arguments.")
-			def stop_fn(obj):
-				code = cls._compute_code(obj)
+			def training_stop(obj: M2Optimizer):
+				raised_flags = cls.compute_flags(obj)
+				watched_flags = selected_flags & (cls.GLOBAL_MAX_ITERATIONS | cls.GLOBAL_MIN_LOSS)
 				if		composition == 'any':
-					cond = bool(code & selected_flags)
+					cond = bool(raised_flags & watched_flags)
 				else: # composition == 'all'
-					other = selected_flags & ~cls.MAX_ITERATIONS
-					cond = bool((code & cls.MAX_ITERATIONS) or ((code & other) == other))
+					other = watched_flags & ~cls.GLOBAL_MAX_ITERATIONS
+					cond = bool((raised_flags & cls.GLOBAL_MAX_ITERATIONS) or ((raised_flags & other) == other))
 				if cond:
-					obj._stop_reason = cls._describe_flags(code)
-					return code
+					obj._training_stop_reason = cls._describe_flags(raised_flags)
+					return raised_flags
 				return 0
-			return stop_fn
+			return training_stop
 		@classmethod
-		def validate(cls, stop_condition: int):
+		def compose_stale_path_function(cls, selected_flags, composition) -> callable:
+			if not cls.validate_flags(selected_flags) or composition not in ('any', 'all'):
+				raise ValueError("Invalid compose arguments.")
+			def stale_path(obj: M2Optimizer):
+				raised_flags = cls.compute_flags(obj)
+				watched_flags = selected_flags & (cls.STALE_PATH_AVG_GRADIENT | cls.STALE_PATH_MAX_ITER)
+				if		composition == 'any':
+					cond = bool(raised_flags & watched_flags)
+				else: # composition == 'all'
+					cond = ((raised_flags & watched_flags) == watched_flags)
+				if cond:
+					obj._stale_path_reason = cls._describe_flags(raised_flags)
+					return raised_flags
+				return 0
+			return stale_path
+		@classmethod
+		def validate_flags(cls, stop_flags: int):
 			attributes = inspect.getmembers(cls, lambda a: isinstance(a, int))
 			max_value = sum(v for _, v in attributes)
-			if stop_condition < 0 or stop_condition == 0 or stop_condition > max_value:
+			if stop_flags < 0 or stop_flags == 0 or stop_flags > max_value:
 				raise ValueError("Invalid stop flags.")
 			return True
 		@classmethod
-		def _describe_flags(cls, code):
-			flags = []
-			if code & cls.MAX_ITERATIONS: flags.append("MAX_ITERATIONS")
-			if code & cls.MIN_LOSS:       flags.append("MIN_LOSS")
-			if code & cls.AVG_GRADIENT:   flags.append("AVG_GRADIENT")
-			return ", ".join(flags)		
+		def _describe_flags(cls, flags):
+			flag_description = []
+			if flags & cls.GLOBAL_MAX_ITERATIONS: 	flag_description.append("GLOBAL_MAX_ITERATIONS")
+			if flags & cls.GLOBAL_MIN_LOSS:       	flag_description.append("GLOBAL_MIN_LOSS")
+			if flags & cls.STALE_PATH_AVG_GRADIENT: flag_description.append("STALE_PATH_AVG_GRADIENT")
+			if flags & cls.STALE_PATH_MAX_ITER:  	flag_description.append("STALE_PATH_MAX_ITER")
+			return ", ".join(flag_description)		
+
+
 	def _reset_history(self):
-		self._loss_history = [1.0 + i for i in reversed(range(self.gradient_window))]
-		self._score_history = [math.nan]*self.max_iter	
+		self._loss_history = [(1.0 + i)*self.min_loss*10 for i in reversed(range(self.gradient_window))]
+		self._score_history = [float('-inf')]*self.max_iter
+	def _set_best_model(self):
+		self._best_model_params = self._model._kernel.get_model_params()
+		self._best_score = self._score_history[self.current_iteration]
+		self._best_training_iter = self.current_iteration
+	def get_best_model(self):
+		return self._best_model_params, self._best_score, self._best_training_iter
 	def fit(self, X, y):
 		"""
 		Fits the model by iterating over M2Kernel parameters.
@@ -345,64 +439,47 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		:return: self
 		"""
 		pbar = tqdm(total=self.max_iter, desc="M2 fitting in progress", leave=True)
-		self._reset_history()
 		self.current_iteration = 0
-		best_score = self._loss_history[-1]
-		best_params = self._model._kernel.get_model_params()
+		self.iterations_on_this_path = 0
+		self._reset_history()
+		self._set_best_model()
+
 		self.plotter.start()
-		while not self.stop_condition(self):
-			try:
+		while not self.training_stop_condition(self):
+			try:		# calculate a prediction, compute score and update loss and score history
 				with np.errstate(over='raise', invalid='raise'):
 					self._update_loss(X, y)
-			except (ValueError, FloatingPointError):
-				raw = self._model._kernel.guess_params()
-				self._model._kernel.set_model_parameters(raw)
+			except (ValueError, FloatingPointError):  # default to a new guessed model parameters
+				self._model._kernel.set_model_parameters(self._model._kernel.guess_params())
 				continue
 			
-			current_score = self._loss_history[-1]
-			current_params = self._model._kernel.get_model_params()
-			if current_score > best_score:
-				best_score = current_score
-				best_params = current_params
+			# keep track of the best model found
+			if abs(self._loss_history[-1]) < abs(self._best_score):
+				self._set_best_model()
 
-			code = self.StopConditions._compute_code(self)
-			if code & self.StopConditions.AVG_GRADIENT:
+			if self.stale_path_condition(self):
 				next_params = self._model._kernel.guess_params()
+				self.iterations_on_this_path = 0
 			else:
-				next_params = self.optimize(current_params)
+				next_params = self.optimize(self._model._kernel.get_model_params())
 
 			self._model._kernel.set_model_parameters(next_params)
 			self.current_iteration += 1
+			self.iterations_on_this_path += 1
 			pbar.update(1)
-			# self.plotter._update()
+			# self.plotter.tick()
 
 		pbar.close()
 		self.plotter.stop()
-		self._model._kernel.set_model_parameters(best_params)
-		print("[INFO] Stop conditions met:", getattr(self, '_stop_reason', ''))
+		self._model._kernel.set_model_parameters(self.get_best_model()[0])
+		print("[INFO] Stop conditions met: ", self._training_stop_reason)
+		print("[INFO] At iteration {iter:d}, got the best score of {score:.3f} with model params\n {model}".format(
+			aux := self.get_best_model(),
+			model = aux[0],
+			score = aux[1],
+			iter = aux[2],
+		))
 		return self
-	# def fit(self, X, y):
-	# 	"""
-	# 	Fits the model by iterating over M2Kernel parameters.
-	# 	:param X: Input features.
-	# 	:param y: Target values.
-	# 	:return: self
-	# 	"""
-	# 	pbar = tqdm(total=self.max_iter, desc="M2 fitting in progress", leave=True)
-	# 	self.current_iteration = 0
-	# 	while not self.stop_condition(self):
-	# 		# _update_loss(X, y) calls the score method, which calls self._model._kernel.predict(X)
-	# 		self._update_loss(X, y)
-
-	# 		# Training step
-	# 		self._model._kernel.set_model_parameters(
-	# 			self.optimize(self._model._kernel.get_model_params())
-	# 		)
-	# 		self.current_iteration += 1
-	# 		pbar.update(1)
-	# 	pbar.close()
-	# 	print("[INFO] Stop conditions met:", getattr(self, '_stop_reason', ''))
-	# 	return self
 	def score(self, X, y):
 		"""
 		Custom scoring method using RMSELoss.
@@ -454,8 +531,11 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 	def get_score_history(self):
 		
 		return self._score_history
-	def __init__(self, learning_rate=0.01, max_iter=1000, tol=1e-4, gradient_window=5, min_loss=0.01, \
-				composition='any', stop_flags: int = StopConditions.MAX_ITERATIONS | StopConditions.AVG_GRADIENT):
+	def __init__(self, learning_rate=0.01, max_iter=1000, tol=1e-4, gradient_window=5, min_loss=1, \
+				composition='any',
+				training_stop_flags: int = StopConditions.GLOBAL_MAX_ITERATIONS | StopConditions.GLOBAL_MIN_LOSS,
+				stale_path_flags: int = StopConditions.STALE_PATH_MAX_ITER | StopConditions.STALE_PATH_AVG_GRADIENT,
+				):
 		"""
 		Initializes the Optimizer with a learning rate, maximum iterations, and tolerance.
 		:param learning_rate: Step size for parameter updates.
@@ -465,17 +545,31 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		super().__init__()
 		self.learning_rate = learning_rate
 		self.max_iter = max_iter
-		self.tol = tol
 		self.min_loss = min_loss
-		self.gradient_window = gradient_window
 		self._loss_history=[]
 		self._score_history=[]
+		
 		self.current_iteration = 0
+		if not self.StopConditions.validate_flags(training_stop_flags): raise ValueError("Failed to validate taining_stop_flags.")
+		self.training_stop_condition = self.StopConditions.compose_training_stop_function(training_stop_flags,composition)
+		self._training_stop_reason = None
 
-		if not self.StopConditions.validate(stop_flags): raise ValueError("Failed to validate stop flags.")
-		self.stop_condition = self.StopConditions.compose(stop_flags,composition)
+		self.iterations_on_this_path = 0
+		self.max_iter_on_same_path = 100
+		self.gradient_window = gradient_window
+		self.tol = tol
+		if not self.StopConditions.validate_flags(stale_path_flags): raise ValueError("Failed to validate stale_path_flags.")
+		self.stale_path_condition = self.StopConditions.compose_stale_path_function(stale_path_flags,'any')
+		self._stale_path_reason = None
 
-		self.plotter=self.Plotter(self.get_score_history)
+		self._best_model_params = None
+		self._best_training_iter = 0
+		self._best_score = float('-inf')
+
+		self.plotter=self.Plotter(
+			data_source=self.get_score_history,
+			# best_model_getter=self.get_best_model,
+			plotstyle=self.Plotter.getplotstlye('ICAR2025'))
 
 if __name__ == "__main__":
 	def AddNoise(df,Pt,col,scale,ceil=1,floor=0):
@@ -809,13 +903,11 @@ if __name__ == "__main__":
 			# params=M2Kernel.Params(KCPU=4, KTemp= 0.1, TauCPU=0.1, TauTemp=0.05),
 			# params=M2Kernel.Params(KCPU=5.354987897910978, KTemp= 2.8002979490801128, TauCPU=0.18629771646496662, TauTemp=0.9528960069986708),
 			TempAmb=40, Dt=30/510),
-		M2Optimizer(max_iter=1000, composition='all', stop_flags=
-			M2Optimizer.StopConditions.MIN_LOSS | 
-			M2Optimizer.StopConditions.AVG_GRADIENT | 
-			M2Optimizer.StopConditions.MAX_ITERATIONS)
+		M2Optimizer(max_iter=1000, composition='any', training_stop_flags=
+			M2Optimizer.StopConditions.GLOBAL_MIN_LOSS | 
+			M2Optimizer.StopConditions.GLOBAL_MAX_ITERATIONS)
 	)
 	m2obj.fit(df['CPU'].to_frame(), df['Temp'])
-	print(m2obj.get_model_params())
 	pred=m2obj.predict(df['CPU'].to_frame())
 	pred=pd.Series(pred, index=df.index)
 	fig, ax = plt.subplots(1)

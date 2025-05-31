@@ -209,10 +209,9 @@ m2obj=M2(
 		# params=M2Kernel.Params(KCPU=4.0, KTemp=0.1, TauCPU=0.1, TauTemp=0.05),
 		params=M2Kernel.Params(KCPU=3.0, KTemp=0.2, TauCPU=0.3, TauTemp=0.1),
 		TempAmb=calc_temp_amp(df), Dt=(df.index[-1]-df.index[0])/len(df)),
-	M2Optimizer(max_iter=1000, composition='all', stop_flags=
-		M2Optimizer.StopConditions.MIN_LOSS | 
-		M2Optimizer.StopConditions.AVG_GRADIENT | 
-		M2Optimizer.StopConditions.MAX_ITERATIONS)
+	M2Optimizer(max_iter=1000, composition='all', training_stop_flags=
+		M2Optimizer.StopConditions.GLOBAL_MIN_LOSS | 
+		M2Optimizer.StopConditions.GLOBAL_MAX_ITERATIONS)
 )
 m2obj.fit(df['CPU'].to_frame(), df['T_CPU'])
 print(m2obj.get_model_params())
