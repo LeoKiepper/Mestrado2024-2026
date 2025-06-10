@@ -217,30 +217,19 @@ m2obj=M2(
 	M2Optimizer(training_duration=timedelta(seconds=10), composition='any', 
 		training_stop_flags = M2Optimizer.StopConditions.GLOBAL_MIN_LOSS 
 							| M2Optimizer.StopConditions.GLOBAL_MAX_DURATION
-				)
+				),
+	plotstyle=get_plotstlye('ICAR2025')
 )
 m2target_col = 'T_CPU'
 m2obj.fit(df2['CPU'].to_frame(), df2[m2target_col], plot=(plot:=True))
-m2pred=m2obj.predict(df2['CPU'].to_frame())
-m2pred=pd.Series(m2pred, index=df2.index)
-if plot:
-	fig, ax = plt.subplots(1,figsize=(10,6))
-	ax.plot(df2['T_CPU'], label='Reference', lw=1)
-	ax.plot(m2pred, label='Prediction', lw=2)
-	ax.grid(which='major', color='#e0e0e0', linewidth=1.5)
-	ax.grid(which='minor', color='#f0f0f0', linewidth=1)
-	ax.set_ylabel('CPU temperature '+r'$[°C]$', fontsize=14)
-	ax.set_xlabel('Time [s]', fontsize=14)
-	ax.set_facecolor('#fafafa')
-	ax.legend()
-	plt.show()
+m2pred=m2obj.predict(df2['CPU'].to_frame(), 		plot= plot, against = df2[m2target_col])
 
 m3_source_col = m2target_col
 df3=df.loc[:,df.columns != m3_source_col].copy(deep=True)
 target_col = 'Temp_residue'
 df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
 
-m3obj=M3(n_estimators=100, plotstyle=get_plotstlye('ICAR2025'))
+m3obj=M3(n_estimators=1000, plotstyle=get_plotstlye('ICAR2025'))
 test_idx = m3obj.cross_validation(
 	df3.loc[:,df3.columns != target_col],	# X
 	df3.loc[:,target_col],					# y
