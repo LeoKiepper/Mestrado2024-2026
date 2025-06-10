@@ -6,6 +6,7 @@ from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.utils.validation import check_X_y, check_array
 from sklearn.linear_model import SGDRegressor
 from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import TimeSeriesSplit
 import math, time
 from tqdm.auto import tqdm
 from typing import Callable, List
@@ -14,7 +15,55 @@ import numpy as np, pandas as pd, matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.container import StemContainer
 import matplotlib; matplotlib.use('QtAgg')
+import xgboost as xgb
+from datetime import timedelta
+
+def infer_score_ylabel(score_fn):
+	SCORING_LABELS = {
+		'root_mean_squared_error': 'RMSE',
+		'mean_absolute_error': 'MAE',
+		'mean_squared_error': 'MSE',
+		'mean_absolute_percentage_error': 'MAPE',
+	}
+	source = inspect.getsource(score_fn)
+	source_dedented = textwrap.dedent(source)
+	tree = ast.parse(source_dedented)
+
+	for node in ast.walk(tree):
+		if isinstance(node, ast.Call):
+			if isinstance(node.func, ast.Name):
+				name = node.func.id
+			elif isinstance(node.func, ast.Attribute):
+				name = node.func.attr
+			else:
+				continue
+			for key, label in SCORING_LABELS.items():
+				if key.lower() in name.lower():
+					return label
+	return "Score"
+def get_plotstlye(ind):
+	plotstyle={
+		'ICAR2025': (lambda lang: SimpleNamespace(
+			CV_figsize = lambda n: (8, 2.5 * n),  
+			prediction_plot_options = {'lw':2, 'label':{'en': 'Prediction', 'pt': 'Predição'}[lang]},
+			reference_plot_options = {'lw':1, 'label':{'en': 'Reference', 'pt': 'Referência'}[lang]},
+			facecolor = '#fafafa',
+			grid_options = [{'which': 'major', 'color': '#e0e0e0', 'linewidth': 1.5},
+							{'which': 'minor', 'color': '#f0f0f0', 'linewidth': 1, 'ls': '--'}],
+			annotate_fontsize = 12,
+			legend_fontsize = 12,
+			title_fontsize = 12,
+			score_history_title = {'en': 'Score History', 'pt': 'Histórico do score'}[lang],
+			score_history_title_fontsize = 12,
+			score_history_xlabel = {'en': 'Iteration', 'pt': 'Iteração'}[lang],
+			score_history_xlabel_fontsize = 12,
+			score_history_ylabel = infer_score_ylabel(M2Optimizer.score),
+			score_history_ylabel_fontsize = 12,
+			))('en')
+		}
+	return plotstyle[ind]
 class FunctionWrapper(ABC):
+	_model: 'M1 | M2 | M3'		# type: ignore
 	def __init__(self):
 		"""
 		Instantiate a wrapper object to provide a common ground access to fields belonging to 
@@ -40,7 +89,33 @@ class dds(BaseEstimator, RegressorMixin):
 		self.M3=M3
 
 class M2(BaseEstimator, RegressorMixin):
-	def __init__(self, kernel: FunctionWrapper, optimizer: FunctionWrapper, random_state = None):
+	def get_model_params(self):
+		"""
+		:return: The parameters of this model.
+		"""		
+		return self._kernel._params
+	def fit(self, X, y, plot = True):
+		"""
+		Orchestrates the training process by validating inputs and coordinating the kernel and optimizer.
+		:param X: Input features.
+		:param y: Target values.
+		"""
+		X, y = check_X_y(X, y)
+		self._optimizer.fit(X, y, plot)
+	def predict(self, X):
+		X = check_array(X, ensure_2d=False, dtype=float)
+		return self._kernel.predict(X)
+	def score(self, X, y):
+		"""
+		Evaluates the model by validating inputs and delegating to the optimizer's score method.
+		:param X: Input features.
+		:param y: Target values.
+		:return: Model score.
+		"""
+		X, y = check_X_y(X, y)
+		return self._optimizer.score(X, y)
+
+	def __init__(self, kernel: 'M2Kernel', optimizer: 'M2Optimizer', random_state = None):
 		"""
 		:param source: Iterable containing the input data to be fed to the model.
 		:param target: Iterable containing the output data to which the model must be fitted.
@@ -53,32 +128,6 @@ class M2(BaseEstimator, RegressorMixin):
 		
 		# Hyperparamaters
 		self.random_state = random_state
-	def get_model_params(self):
-		"""
-		:return: The parameters of this model.
-		"""		
-		return self._kernel._params
-	def fit(self, X, y):
-		"""
-		Orchestrates the training process by validating inputs and coordinating the kernel and optimizer.
-		:param X: Input features.
-		:param y: Target values.
-		"""
-		X, y = check_X_y(X, y)
-		self._optimizer.fit(X, y)
-	def predict(self, X):
-		X = check_array(X, ensure_2d=False, dtype=float)
-		return self._kernel.predict(X)
-
-	def score(self, X, y):
-		"""
-		Evaluates the model by validating inputs and delegating to the optimizer's score method.
-		:param X: Input features.
-		:param y: Target values.
-		:return: Model score.
-		"""
-		X, y = check_X_y(X, y)
-		return self._optimizer.score(X, y)
 	def get_params(self, deep=True):
 		params = {
 			'random_state': self.random_state,
@@ -116,16 +165,17 @@ class M2Kernel(FunctionWrapper):
 		KTemp: float
 		TauCPU: float
 		TauTemp: float
-
-	@staticmethod
-	def _params_domain_restrict(params: Params) -> Params:
-		tau_tol=1e-9
-		min_K=0.00001
-
-		KCPU = math.sqrt(params.KCPU**2+min_K**2)
-		KTemp = math.sqrt(params.KTemp**2+min_K**2)
-		TauCPU = params.TauCPU if params.TauCPU > tau_tol else tau_tol
-		TauTemp = params.TauTemp if params.TauTemp > tau_tol else tau_tol
+	@dataclass
+	class ParamSpace:
+		KCPU: tuple
+		KTemp: tuple
+		TauCPU: tuple
+		TauTemp: tuple
+	def _params_domain_restrict(self,params: Params) -> Params:
+		KCPU = math.sqrt(params.KCPU**2+self._param_space.KCPU[0]**2)
+		KTemp = math.sqrt(params.KTemp**2+self._param_space.KTemp[0]**2)
+		TauCPU = np.clip(params.TauCPU, *self._param_space.TauCPU)
+		TauTemp = np.clip(params.TauTemp, *self._param_space.TauTemp)
 		return M2Kernel.Params(KCPU=KCPU, KTemp=KTemp, TauCPU=TauCPU, TauTemp=TauTemp)
 	def set_model_parameters(self, params: Params):
 		"""
@@ -137,7 +187,7 @@ class M2Kernel(FunctionWrapper):
 		# 	TempNext = TempCurrent
 		# 	+ KCPU * FCPU(CPUCurrent) * (1 - exp(- t / TauCPU))
 		# 	- KTemp * FTEMP(TempCurrent, TempExt) * (1 - exp(- t / TauTemp))
-		params = M2Kernel._params_domain_restrict(params)
+		params = self._params_domain_restrict(params)
 		self._params = {
 			'KCPU': params.KCPU,
 			'KTemp': params.KTemp,
@@ -160,10 +210,10 @@ class M2Kernel(FunctionWrapper):
 			TauTemp=self._params['TauTemp'])
 	def guess_params(self) -> Params:
 		return self.Params(
-			KCPU = np.random.uniform(0,10),
-			KTemp = np.random.uniform(0,1),
-			TauCPU = np.random.uniform(0,1),
-			TauTemp = np.random.uniform(0,0.5),
+			KCPU = np.random.uniform(*self._param_space.KCPU),
+			KTemp = np.random.uniform(*self._param_space.KTemp),
+			TauCPU = np.random.uniform(*self._param_space.TauCPU),
+			TauTemp = np.random.uniform(*self._param_space.TauTemp),
 			)
 	def _next_temp(self, cpu_current, temp_current, temp_ext):
 		r"""
@@ -192,7 +242,7 @@ class M2Kernel(FunctionWrapper):
 		DeltaTempFromTemp = KTEMP * FTEMP(temp_current, temp_ext) * BETA_TEMP
 
 		return temp_current + DeltaTempFromCPU - DeltaTempFromTemp
-	def predict(self, X):
+	def predict(self, X) -> List:
 		r"""
 		Calculates a prediction series using the parrameters currently saved in the object.
 
@@ -205,7 +255,8 @@ class M2Kernel(FunctionWrapper):
 		for cc, cpu in enumerate(X[1:], start=1):
 			pred[cc] = self._next_temp(cpu, pred[cc-1], self._temp_amb)
 		return pred
-	def __init__(self, FCPU: callable, FTEMP: callable, TempAmb: float, Dt:float,  params: Params=None, noise_level=0):	# Dt test value was Dt = 30/510.0
+
+	def __init__(self, FCPU: callable, FTEMP: callable, TempAmb: float, Dt:float,  params: Params=None, param_space: ParamSpace = None, noise_level=0):	# Dt test value was Dt = 30/510.0
 		r"""
 		Instantiates the M2Kernel object
 
@@ -228,6 +279,8 @@ class M2Kernel(FunctionWrapper):
 		self.noise_level = noise_level
 
 		self.Dt = Dt # set_params depends on Dt, so it must be called after setting it.
+		if param_space is None: self._param_space = self.ParamSpace(KCPU = (0.00001, 1), KTemp=(0.00001, 0.01), TauCPU=(1e-9,2), TauTemp=(1e-9,2))
+		else: self._param_space = param_space
 		if params is None: params = self.guess_params()
 		self.set_model_parameters(params)	
 	def get_params(self, deep=True):
@@ -241,144 +294,53 @@ class M2Kernel(FunctionWrapper):
 		return self
 class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 	class Plotter:
-		from matplotlib.figure import Figure
-		from matplotlib.axes import Axes
-		@staticmethod
-		def infer_score_ylabel(score_fn):
-			SCORING_LABELS = {
-				'root_mean_squared_error': 'RMSE',
-				'mean_absolute_error': 'MAE',
-				'mean_squared_error': 'MSE',
-				'mean_absolute_percentage_error': 'MAPE',
-			}
-			source = inspect.getsource(score_fn)
-			source_dedented = textwrap.dedent(source)
-			tree = ast.parse(source_dedented)
-
-			for node in ast.walk(tree):
-				if isinstance(node, ast.Call):
-					if isinstance(node.func, ast.Name):
-						name = node.func.id
-					elif isinstance(node.func, ast.Attribute):
-						name = node.func.attr
-					else:
-						continue
-					for key, label in SCORING_LABELS.items():
-						if key.lower() in name.lower():
-							return label
-			return "Score"
-		@classmethod
-		def getplotstlye(cls,ind):
-			plotstyle={'ICAR2025': (lambda lang: SimpleNamespace(
-				score_history_title = 'Score history',
-				score_history_title_fontsize = 12,
-				score_history_xlabel = 'Iterations',
-				score_history_xlabel_fontsize = 12,
-				score_history_ylabel = cls.infer_score_ylabel(M2Optimizer.score),
-				score_history_ylabel_fontsize = 12,
-				))('en')
-				}
-			return plotstyle[ind]
-
-		def __init__(self, data_source: Callable[[], List[float]], best_model_getter: callable = None, update_interval: float = 0.1, plotstyle={}):
+		def __init__(self, data_source: Callable[[], List[float]], best_model_getter: callable = None, plotstyle={}):
 			self.data_source = data_source
-			self.update_interval = update_interval  # intervalo em ms para FuncAnimation
-			self.fig = None
-			self.ax = None
-			self.data_line = None
-			self.ani = None
-			self._next_update = None
 			self.best_model_getter = best_model_getter
-			self.best_score_line_updater = lambda: None
-			self.best_iter_stem_updater = lambda: None
 			self.plotstyle = plotstyle
-		def _update(self, frame=None):
+
+		def plot(self):
+			import matplotlib.pyplot as plt
 			data = self.data_source()
-			self.data_line.set_ydata(data)
-			self.best_score_line_updater()
-			self.best_iter_stem_updater()
-			self.ax.relim()
-			self.ax.autoscale_view(scalex=False, scaley=True)
-			return (
-				self.data_line,
-				self.best_score_line,
-				self.best_iter_stem.markerline,
-				self.best_iter_stem.stemlines
-			)
-		def start(self):
-			self.fig, self.ax = plt.subplots(1)
-			data = self.data_source()
+			fig, ax = plt.subplots(1)
+			x = range(len(data))
+			ax.plot(x, data, label='Score history')
 			if self.best_model_getter is not None:
-				_,self._best_score,self._best_iter = self.best_model_getter()
-				self.best_score_line = self.ax.axhline(self._best_score)
-				self.best_score_line.set_animated(True)
-				def best_score_updater():
-					self.best_score_line.set_ydata([self._best_score]*2)
-				self.best_score_line_updater = best_score_updater
-				self.best_iter_stem = self.ax.stem(self._best_iter,self._best_score)
-				self.best_iter_stem.markerline.set_animated(True)
-				self.best_iter_stem.stemlines.set_animated(True)
-				def best_stem_updater():
-					x, y = self._best_iter, self._best_score
-					self.best_iter_stem.markerline.set_data([x], [y])
-					self.best_iter_stem.stemlines.set_segments([[(x, 0), (x, y)]])
-				self.best_iter_stem_updater = best_stem_updater
-			self.data_line, = self.ax.plot(data, animated=True)
-			self.ax.set_xlim(0, len(data) - 1)
-			self.ax.relim()
-			self.ax.autoscale_view(scalex=False, scaley=True)
-			ps = self.plotstyle
-			self.ax.set_xlabel(ps.score_history_xlabel, fontsize=ps.score_history_xlabel_fontsize)
-			self.ax.set_ylabel(ps.score_history_ylabel, fontsize=ps.score_history_ylabel_fontsize)
-			self.ax.set_title(ps.score_history_title, fontsize = ps.score_history_title_fontsize)
-			self.ax.grid(which='major', color='#e0e0e0', linewidth=1.5)
-			self.ax.grid(which='minor', color='#f0f0f0', linewidth=1, ls='--')
-			self.ax.set_facecolor('#fafafa')
-			# self.ax.legend()
-			# ax.plot(df['T_CPU'], label='Reference', lw=1)
-			# ax.plot(pred, label='Prediction', lw=2)
-			# ax.set_ylabel('CPU temperature '+r'$[°C]$', fontsize=14)
-			# ax.set_xlabel('Time [s]', fontsize=14)
-			plt.ion()
-			self.ani = FuncAnimation(
-				self.fig,
-				self._update,
-				interval=self.update_interval*1000,
-				blit=True,
-				save_count=int(round(1/self.update_interval))
-			)
-			plt.show(block=False)
-			self._next_update = time.time() + self.update_interval
-		def stop(self):
-			if self.ani:
-				self.ani.event_source.stop()
-			plt.ioff()
-		def tick(self):
-			now = time.time()
-			if now >= self._next_update:
-				time.sleep(1/self.update_interval)
-				self._next_update = now + self.update_interval
+				_, best_score, best_iter = self.best_model_getter()
+				ax.axhline(best_score, color='r', linestyle='--', label='Best score')
+				ax.stem([best_iter], [best_score], linefmt='r-', markerfmt='ro', basefmt='k-')
+			PS = self.plotstyle
+			ax.set_xlabel(PS.score_history_xlabel, fontsize=PS.score_history_xlabel_fontsize)
+			ax.set_ylabel(PS.score_history_ylabel, fontsize=PS.score_history_ylabel_fontsize)
+			ax.set_title(PS.score_history_title, fontsize=PS.score_history_title_fontsize)
+			ax.grid(which='major', color='#e0e0e0', linewidth=1.5)
+			ax.grid(which='minor', color='#f0f0f0', linewidth=1, ls='--')
+			ax.set_facecolor(PS.facecolor)
+			ax.legend()
+			plt.show(block=True)
 	class StopConditions:
 		GLOBAL_MAX_ITERATIONS 		= 1 << 0
 		GLOBAL_MIN_LOSS      		= 1 << 1
-		STALE_PATH_AVG_GRADIENT  	= 1 << 2
-		STALE_PATH_MAX_ITER			= 1 << 3
+		GLOBAL_MAX_DURATION 		= 1 << 2
+		STALE_PATH_AVG_GRADIENT  	= 1 << 3
+		STALE_PATH_MAX_ITER			= 1 << 4
 
 		@classmethod
-		def compute_flags(cls, obj):
+		def compute_flags(cls, obj: 'M2Optimizer'):
 			code = 0
-			if obj.current_iteration == obj.max_iter:							code |= cls.GLOBAL_MAX_ITERATIONS
-			if abs(obj._loss_history[-1]) <= abs(obj.min_loss):					code |= cls.GLOBAL_MIN_LOSS
-			if abs(obj._loss_gradient()) <= obj.tol:							code |= cls.STALE_PATH_AVG_GRADIENT
-			if obj.iterations_on_this_path == obj.max_iter_on_same_path:		code |= cls.STALE_PATH_MAX_ITER
+			if obj.current_iteration == obj.max_iter:												code |= cls.GLOBAL_MAX_ITERATIONS
+			if abs(obj._gradient_window[-1]) <= abs(obj.global_min_loss):								code |= cls.GLOBAL_MIN_LOSS
+			if abs(obj._loss_gradient()) <= obj.avg_gradient_tol:									code |= cls.STALE_PATH_AVG_GRADIENT
+			if obj.iterations_on_this_path == obj.max_iter_on_same_path:							code |= cls.STALE_PATH_MAX_ITER
+			if (time.time() - obj._training_start_time) >= obj.training_duration.total_seconds():	code |= cls.GLOBAL_MAX_DURATION
 			return code
 		@classmethod
 		def compose_training_stop_function(cls, selected_flags, composition) -> callable:
 			if not cls.validate_flags(selected_flags) or composition not in ('any', 'all'):
 				raise ValueError("Invalid compose arguments.")
-			def training_stop(obj: M2Optimizer):
+			def training_stop(obj: 'M2Optimizer'):
 				raised_flags = cls.compute_flags(obj)
-				watched_flags = selected_flags & (cls.GLOBAL_MAX_ITERATIONS | cls.GLOBAL_MIN_LOSS)
+				watched_flags = selected_flags & (cls.GLOBAL_MAX_ITERATIONS | cls.GLOBAL_MIN_LOSS | cls.GLOBAL_MAX_DURATION)
 				if		composition == 'any':
 					cond = bool(raised_flags & watched_flags)
 				else: # composition == 'all'
@@ -393,7 +355,7 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		def compose_stale_path_function(cls, selected_flags, composition) -> callable:
 			if not cls.validate_flags(selected_flags) or composition not in ('any', 'all'):
 				raise ValueError("Invalid compose arguments.")
-			def stale_path(obj: M2Optimizer):
+			def stale_path(obj: 'M2Optimizer'):
 				raised_flags = cls.compute_flags(obj)
 				watched_flags = selected_flags & (cls.STALE_PATH_AVG_GRADIENT | cls.STALE_PATH_MAX_ITER)
 				if		composition == 'any':
@@ -417,63 +379,65 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			flag_description = []
 			if flags & cls.GLOBAL_MAX_ITERATIONS: 	flag_description.append("GLOBAL_MAX_ITERATIONS")
 			if flags & cls.GLOBAL_MIN_LOSS:       	flag_description.append("GLOBAL_MIN_LOSS")
-			if flags & cls.STALE_PATH_AVG_GRADIENT: flag_description.append("STALE_PATH_AVG_GRADIENT")
-			if flags & cls.STALE_PATH_MAX_ITER:  	flag_description.append("STALE_PATH_MAX_ITER")
+			if flags & cls.GLOBAL_MAX_DURATION:     flag_description.append("GLOBAL_MAX_DURATION")
 			return ", ".join(flag_description)		
 
-
+	def _reset_score_buffer(self):
+		self._score_buffer = [float('-inf')] * self.max_iter
 	def _reset_history(self):
-		self._loss_history = [(1.0 + i)*self.min_loss*10 for i in reversed(range(self.gradient_window))]
-		self._score_history = [float('-inf')]*self.max_iter
+		self._gradient_window = [(1.0 + i)*self.global_min_loss*10 for i in reversed(range(self.gradient_window_size))]
+		self._reset_score_buffer()
+		self.score_history = []
 	def _set_best_model(self):
 		self._best_model_params = self._model._kernel.get_model_params()
-		self._best_score = self._score_history[self.current_iteration]
+		self._best_score = self.current_score
 		self._best_training_iter = self.current_iteration
 	def get_best_model(self):
 		return self._best_model_params, self._best_score, self._best_training_iter
-	def fit(self, X, y):
+	def fit(self, X, y, plot = True):
 		"""
 		Fits the model by iterating over M2Kernel parameters.
 		:param X: Input features.
 		:param y: Target values.
 		:return: self
 		"""
-		pbar = tqdm(total=self.max_iter, desc="M2 fitting in progress", leave=True)
 		self.current_iteration = 0
+		self.buffer_index = 0
 		self.iterations_on_this_path = 0
 		self._reset_history()
 		self._set_best_model()
 
-		self.plotter.start()
+		# Initialize progress bar and progress functions. Feed training time across iterations to the progress function
+		pbar, progress = self._start_pbar();			last = time.time(); self._training_start_time = last
+
 		while not self.training_stop_condition(self):
+			now = time.time()
+			
+			if self.buffer_index == self.max_iter: self._flush_score_buffer() 
 			try:		# calculate a prediction, compute score and update loss and score history
-				with np.errstate(over='raise', invalid='raise'):
-					self._update_loss(X, y)
+				with np.errstate(over='raise', invalid='raise'): 	self._update_score(X, y)
 			except (ValueError, FloatingPointError):  # default to a new guessed model parameters
 				self._model._kernel.set_model_parameters(self._model._kernel.guess_params())
-				continue
+				self.iterations_on_this_path = 0; continue
 			
 			# keep track of the best model found
-			if abs(self._loss_history[-1]) < abs(self._best_score):
-				self._set_best_model()
+			if self.current_score > self._best_score: 	self._set_best_model()
 
-			if self.stale_path_condition(self):
-				next_params = self._model._kernel.guess_params()
-				self.iterations_on_this_path = 0
-			else:
-				next_params = self.optimize(self._model._kernel.get_model_params())
+			# calculate params for next iteration
+			if self.stale_path_condition(self): 		next_params = self._model._kernel.guess_params(); self.iterations_on_this_path = 0
+			else: next_params = self.optimize(self._model._kernel.get_model_params())
 
 			self._model._kernel.set_model_parameters(next_params)
 			self.current_iteration += 1
+			self.buffer_index += 1
 			self.iterations_on_this_path += 1
-			pbar.update(1)
-			# self.plotter.tick()
-
+			self._update_pbar(pbar, progress(now,last)); last = now
+		self._flush_score_buffer()
 		pbar.close()
-		self.plotter.stop()
+		if plot: self.plotter.plot()
 		self._model._kernel.set_model_parameters(self.get_best_model()[0])
 		print("[INFO] Stop conditions met: ", self._training_stop_reason)
-		print("[INFO] At iteration {iter:d}, got the best score of {score:.3f} with model params\n {model}".format(
+		print("[INFO] At iteration {iter:d}, got the best score of {score:.3f} with model params\n{model}".format(
 			aux := self.get_best_model(),
 			model = aux[0],
 			score = aux[1],
@@ -487,8 +451,8 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		:param y: Target values.
 		:return: Negative RMSE (to align with sklearn's maximization convention).
 		"""
-		predictions = self._model._kernel.predict(X)
-		rmse = root_mean_squared_error(y, predictions)
+		self._current_prediction = self._model._kernel.predict(X)
+		rmse = root_mean_squared_error(y, self._current_prediction)
 		return -rmse
 	def optimize(self, params: M2Kernel.Params) -> M2Kernel.Params:
 			"""
@@ -511,30 +475,25 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 
 			# Return updated parameters as a Params object
 			return M2Kernel.Params(KCPU, KTemp, TauCPU, TauTemp)
-	def _update_loss(self, X, y):
-		current_loss = self.score(X, y)
-		self._loss_history = (self._loss_history + [current_loss])[-self.gradient_window:]
-		self._score_history[self.current_iteration]=-current_loss
+	def _update_score(self, X, y):
+		self.current_score = self.score(X, y)
+		self._gradient_window = (self._gradient_window + [self.current_score])[-self.gradient_window_size:]
+		self._score_buffer[self.buffer_index] = self.current_score
 	def _loss_gradient(self):
-		return (self._loss_history[-1] - self._loss_history[0]) / self.gradient_window if self.gradient_window > 1 else self._loss_history[0]
-	def get_params(self, deep=True):
-		params = {
-			'learning_rate': self.learning_rate,
-			'max_iter': self.max_iter,
-			'tol': self.tol,
-		}
-		return params
-	def set_params(self, **params):
-		for key, value in params.items():
-			if hasattr(self, key): setattr(self, key, value)
-		return self
+		return (self._gradient_window[-1] - self._gradient_window[0]) / self.gradient_window_size if self.gradient_window_size > 1 else self._gradient_window[0]
 	def get_score_history(self):
-		
-		return self._score_history
-	def __init__(self, learning_rate=0.01, max_iter=1000, tol=1e-4, gradient_window=5, min_loss=1, \
+		return np.concatenate(self.score_history + [self._score_buffer[:self.buffer_index]]).tolist()
+	def _flush_score_buffer(self):		
+		self.buffer_index = 0
+		self.score_history.append(self._score_buffer.copy())
+		self._reset_score_buffer()
+		return
+
+	def __init__(self, learning_rate=0.01, max_iter=1000, tol=1e-4, gradient_window=5, global_min_loss=1, score_tol=100, training_duration: timedelta = timedelta(minutes=1), \
 				composition='any',
 				training_stop_flags: int = StopConditions.GLOBAL_MAX_ITERATIONS | StopConditions.GLOBAL_MIN_LOSS,
 				stale_path_flags: int = StopConditions.STALE_PATH_MAX_ITER | StopConditions.STALE_PATH_AVG_GRADIENT,
+				plot_refresh_rate = 10
 				):
 		"""
 		Initializes the Optimizer with a learning rate, maximum iterations, and tolerance.
@@ -545,22 +504,59 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		super().__init__()
 		self.learning_rate = learning_rate
 		self.max_iter = max_iter
-		self.min_loss = min_loss
-		self._loss_history=[]
-		self._score_history=[]
-		
+		self.global_min_loss = global_min_loss
+		self.training_duration = training_duration
+		self._training_start_time = None
+		self.score_tol = score_tol
 		self.current_iteration = 0
-		if not self.StopConditions.validate_flags(training_stop_flags): raise ValueError("Failed to validate taining_stop_flags.")
-		self.training_stop_condition = self.StopConditions.compose_training_stop_function(training_stop_flags,composition)
-		self._training_stop_reason = None
+		self.current_score = float('-inf')
+		self.score_history = []
+		self._gradient_window=[]
+		self._score_buffer=[]
+		self._current_prediction=[]
+		self._best_prediction=[]
+		
 
+		SC = self.StopConditions
+		if not SC.validate_flags(training_stop_flags | stale_path_flags): raise ValueError("Failed to validate StopConditions flags.")
+		if not (training_stop_flags & (SC.GLOBAL_MAX_ITERATIONS | SC.GLOBAL_MAX_DURATION)): training_stop_flags |= SC.GLOBAL_MAX_ITERATIONS
+		self.training_stop_condition = SC.compose_training_stop_function(training_stop_flags,composition)
+		self.stale_path_condition = SC.compose_stale_path_function(stale_path_flags,'any')
+		self._training_stop_reason = None
+		self._stale_path_reason = None
+
+		# Set up progress bar
+		pbar_opts = {'leave': True, 'desc': 'M2 fitting in progress'}
+		self._max_duration_flag_set = bool(training_stop_flags & SC.GLOBAL_MAX_DURATION)
+		self._pbar_iters = 0
+		if self._max_duration_flag_set:
+			total_sec = self.training_duration.total_seconds()
+			if total_sec >= (denominator:=3600): unit = 'h'
+			elif total_sec >= 2*(denominator:=60): unit = 'min'
+			else: unit, denominator = 's', 1
+			def _start_progress_bar():
+				self._pbar_iters = 0
+				progress_func = (lambda now, last: now - last) 
+				return tqdm(**(pbar_opts | {'total': total_sec/denominator, 'unit': unit, 'bar_format': '{l_bar}{bar}| {n:.2f}/{total:.2f} {unit} | {postfix}'})), progress_func
+			def _update_progress_bar(pbar: tqdm, progress: float):
+				self._pbar_iters = getattr(self, '_pbar_iters', 0) + 1
+				elapsed = (time.time() - self._training_start_time)
+				it_per_s = self._pbar_iters / elapsed if elapsed > 0 else 0
+				pbar.update(progress/denominator)
+				pbar.set_postfix({'it/s': f'{it_per_s:.2f}'})
+				# pbar.update(progress/denominator)
+				# pbar.set_postfix({'it/s': f'{1/progress:.2f}'})
+		else:
+			def _start_progress_bar():
+				progress_func = (lambda now, last: 1)
+				return tqdm(**(pbar_opts | {'total': self.max_iter})), progress_func
+			def _update_progress_bar(pbar: tqdm, progress: float):
+				pbar.update(progress)
+		self._start_pbar, self._update_pbar = _start_progress_bar, _update_progress_bar
 		self.iterations_on_this_path = 0
 		self.max_iter_on_same_path = 100
-		self.gradient_window = gradient_window
-		self.tol = tol
-		if not self.StopConditions.validate_flags(stale_path_flags): raise ValueError("Failed to validate stale_path_flags.")
-		self.stale_path_condition = self.StopConditions.compose_stale_path_function(stale_path_flags,'any')
-		self._stale_path_reason = None
+		self.gradient_window_size = gradient_window
+		self.avg_gradient_tol = tol
 
 		self._best_model_params = None
 		self._best_training_iter = 0
@@ -568,8 +564,160 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 
 		self.plotter=self.Plotter(
 			data_source=self.get_score_history,
-			# best_model_getter=self.get_best_model,
-			plotstyle=self.Plotter.getplotstlye('ICAR2025'))
+			plotstyle=get_plotstlye('ICAR2025')
+			)
+	def get_params(self, deep=True):
+		params = {
+			'learning_rate': self.learning_rate,
+			'max_iter': self.max_iter,
+			'tol': self.avg_gradient_tol,
+		}
+		return params
+	def set_params(self, **params):
+		for key, value in params.items():
+			if hasattr(self, key): setattr(self, key, value)
+		return self
+
+class M3(ABC,BaseEstimator, RegressorMixin):
+	class Plotter:
+		def __init__(self, plotstyle={}):
+			self.plotstyle = plotstyle
+
+		def plot_cv(self, y_tests, y_preds, scores, fold_indices):
+			"""
+			Plot predictions and references for each fold in cross-validation.
+			y_tests: list of arrays, each with reference values for a fold
+			y_preds: list of arrays, each with predicted values for a fold
+			scores: list of floats, each with the score for a fold
+			fold_indices: list of arrays, each with the indices for a fold
+			labels: optional list of labels for each fold
+			"""
+			import matplotlib.pyplot as plt
+			def sanitize_plotstyle(opts):
+				opts.CV_figsize = getattr(opts, "CV_figsize", lambda: None)
+				opts.reference_plot_options = getattr(opts, "reference_plot_options", {})
+				opts.prediction_plot_options = getattr(opts, "prediction_plot_options", {})
+				opts.facecolor = getattr(opts, "facecolor", None)
+				opts.grid_options = getattr(opts, "grid_options", [])
+				opts.annotate_fontsize = getattr(opts, "annotate_fontsize", None)
+				opts.legend_fontsize = getattr(opts, "legend_fontsize", None)
+				return opts
+			PS = sanitize_plotstyle(self.plotstyle)
+			n_folds = len(fold_indices)
+			fig, ax = plt.subplots(n_folds, figsize=PS.CV_figsize(n_folds) )
+			if n_folds == 1: ax = [ax]
+			for ff in fold_indices:
+				ax[ff].plot(y_tests[ff], **PS.reference_plot_options)	# Reference line
+				ax[ff].plot(y_preds[ff], **PS.prediction_plot_options)	# Prediction line
+				ax[ff].set_facecolor(PS.facecolor)
+				for grid_option in PS.grid_options: ax[ff].grid(**grid_option)
+				ax[ff].annotate(f'Fold {ff+1}', xy=(0.01,0.04), xycoords='axes fraction',
+					fontsize=PS.annotate_fontsize, horizontalalignment='left', verticalalignment='bottom')
+				ax[ff].annotate(f'RMSE = {scores[ff]:0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
+					fontsize=PS.annotate_fontsize, horizontalalignment='right', verticalalignment='bottom')
+				ax[ff].legend(loc='lower center', fontsize=PS.legend_fontsize)
+			plt.tight_layout()
+			plt.show(block=True)
+		def plot_fit(self, y_true, y_pred, **kwargs):
+			"""
+			Plot predictions vs reference for a single fit (full dataset).
+			"""
+			import matplotlib.pyplot as plt
+			fig, ax = plt.subplots(1)
+			ax.plot(y_true, label='Reference', lw=1)
+			ax.plot(y_pred, label='Prediction', lw=2)
+			ax.set_facecolor('#fafafa')
+			ax.grid(which='major', color='#e0e0e0', linewidth=1.5)
+			ax.grid(which='minor', color='#f0f0f0', linewidth=1)
+			ax.legend(loc='lower center', fontsize=12)
+			plt.tight_layout()
+			plt.show(block=True)
+	def cross_validation(self, X, y, plot=True, n_splits = 5, split_units = '%', test_size = 20, gap_size = 10):
+		"""
+		Perform cross-validation on the dataset using TimeSeriesSplit.
+		:param X: Input features.
+		:param y: Target values.
+		:param plot: Whether to plot the results.
+		:param n_splits: Number of splits for cross-validation.
+		:param split_units: Units for split size, can be '%', 'index', or 'positions'.
+		:param test_size: Size of the test set, interpreted according to split_units.
+		:param gap_size: Size of the gap between train and test sets, interpreted according to split_units.
+		:return: Tuple of test indices, predicted values, and scores for each fold.
+		"""
+		if split_units not in ['%','index','positions']:
+			raise ValueError("Unrecognized key for split_units. Must be either '%' for a percent (0 to 100) of the total length of dataset, 'index' for the same units used for values in the dataset's DataFrame.index, or 'positions' for basic integer indexation from 0 to len(dataset).")
+		if split_units == '%':
+			def split_dataset(X,y, n_splits):
+				TEST_SIZE = round(len(X) * test_size / 100.0)
+				GAP_SIZE = round(len(X) * gap_size / 100.0)
+				tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap=GAP_SIZE)
+				return tss.split(X,y)
+		if split_units == 'positions':
+			def split_dataset(X,y, n_splits):
+				TEST_SIZE = test_size
+				GAP_SIZE = gap_size
+				tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap_size=GAP_SIZE)
+				return tss.split(X,y)
+		if split_units == 'index':
+			def split_dataset(X,y, n_splits):
+				if not isinstance(X,pd.DataFrame):
+					raise TypeError("If split_units = 'positions', X must be a DataFrame")
+				t_end = X.index[-1]
+				t_test_start = t_end - test_size
+				t_gap_start = t_test_start - gap_size
+				pos_test_start = X.index.searchsorted(t_test_start, side='right')
+				pos_gap_start = X.index.searchsorted(t_gap_start, side='left')
+
+				TEST_SIZE = len(X)-pos_test_start
+				GAP_SIZE = pos_test_start-pos_gap_start
+				tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap_size=GAP_SIZE)
+				return tss.split(X,y)
+
+		X, y = check_X_y(X, y)
+		y = y.ravel()
+		y_tests, y_preds, scores, test_idx = [], [], [], []
+		for train_idx_fold, test_idx_fold in split_dataset(X, y, n_splits):
+			X_train, X_test = X[train_idx_fold], X[test_idx_fold]
+			y_train, y_test = y[train_idx_fold], y[test_idx_fold]
+			self.reg.fit(X_train, y_train, 
+				eval_set=[(X_train, y_train), (X_test, y_test)],
+				verbose=False)
+			pred = self.reg.predict(X_test)
+			score = root_mean_squared_error(pred, y_test)
+			y_tests.append(y_test)
+			y_preds.append(pred)
+			scores.append(score)
+			test_idx.append(test_idx_fold)
+		if plot:
+			self.plotter.plot_cv(y_tests, y_preds, scores, list(range(n_splits)))
+		return test_idx, y_preds, scores
+	def predict(self, X):
+		return self.reg.predict(X)
+
+	def __init__(self, n_estimators=1000, early_stopping_rounds=20, learning_rate=0.001, plotstyle={}):
+		self.n_estimators = n_estimators
+		self.early_stopping_rounds = early_stopping_rounds
+		self.learning_rate = learning_rate
+
+		self.reg = xgb.XGBRegressor(
+			n_estimators = self.n_estimators,						
+			early_stopping_rounds = self.early_stopping_rounds,	
+			learning_rate = self.learning_rate
+			)
+		self.plotter = self.Plotter(plotstyle=plotstyle)
+	def get_params(self, deep=True):
+		params = {
+			'random_state': self.random_state,
+		}
+		return params
+	def set_params(self, **params):
+		return self
+
+
+
+
+
+
 
 if __name__ == "__main__":
 	def AddNoise(df,Pt,col,scale,ceil=1,floor=0):
@@ -747,8 +895,8 @@ if __name__ == "__main__":
 			df.iloc[-1,-1]=df.iloc[-2,-1]+(df.iloc[-2,-1]-df.iloc[-3,-1])
 			df=df.rename(columns={'t':'Timestamp'})
 			df=df.set_index('Timestamp')
-			df=df.rename(columns={'t_mod':'t'})
-			return df
+			# df=df.rename(columns={'t_mod':'t'})
+			return df.drop(columns=['t_mod'])
 		
 
 		df = GenerateDF(Pt,Pcpu,TimeArrayParams)
@@ -836,13 +984,11 @@ if __name__ == "__main__":
 
 		idx=df.columns.get_loc('CPU')
 		idy=df.columns.get_loc('Temp')	
-		idt=df.columns.get_loc('t')
 
 		temp_ext=df.iloc[0,idy]
 		Dt=df.index[1]-df.index[0]
 		for i in range(1,len(df)):
 			temp_current=df.iloc[i-1,idy]
-			t=df.iloc[i,idt]
 			cpu_current=df.iloc[i,idx]
 			BETA_CPU = 1 - np.exp(-Dt/TauCPU)
 			BETA_TEMP = 1 - np.exp(-Dt/TauTemp)
@@ -863,9 +1009,9 @@ if __name__ == "__main__":
 	Pt   = [0  ,    10 ,    12  ,   15  ,   21  ,   30  ]       # Times
 	Pcpu = [0.4,    0.3,    0.98,   0.21,   0.61,   0.61]       # Values
 
-	df=SynthCPUpercent(Pt,Pcpu)									# Create a %CPU dataframe
-	df=SimulateTmep(df,temp_ext=40)								# Calculate temperature values	
-	AddNoise(df,Pt,'Temp',scale=1,ceil=None, floor=None)
+	df2=SynthCPUpercent(Pt,Pcpu)									# Create a %CPU dataframe
+	df2=SimulateTmep(df2,temp_ext=40)								# Calculate temperature values	
+	AddNoise(df2,Pt,'Temp',scale=1,ceil=None, floor=None)
 
 	# PlotSim(df)
 
@@ -899,20 +1045,50 @@ if __name__ == "__main__":
 
 	# ==================  Define and instantiate model components
 	m2obj=M2(
-		M2Kernel(lambda cpu: cpu**2, lambda temp_current, temp_ext: temp_current-temp_ext, 
+		M2Kernel(lambda cpu: cpu**2, lambda temp_current, temp_ext: temp_current-temp_ext, TempAmb=40, Dt=30/510,
+			param_space=M2Kernel.ParamSpace(KCPU=(1e-5,10), KTemp=(1e-5,1), TauCPU=(1e-9,1), TauTemp=(1e-9,0.5)),
 			# params=M2Kernel.Params(KCPU=4, KTemp= 0.1, TauCPU=0.1, TauTemp=0.05),
 			# params=M2Kernel.Params(KCPU=5.354987897910978, KTemp= 2.8002979490801128, TauCPU=0.18629771646496662, TauTemp=0.9528960069986708),
-			TempAmb=40, Dt=30/510),
-		M2Optimizer(max_iter=1000, composition='any', training_stop_flags=
-			M2Optimizer.StopConditions.GLOBAL_MIN_LOSS | 
-			M2Optimizer.StopConditions.GLOBAL_MAX_ITERATIONS)
+			# params=M2Kernel.Params(KCPU=8.328657109382513, KTemp=0.5493883896628988, TauCPU=np.float64(0.19189461891598183), TauTemp=np.float64(0.33700592667911833))		# RMSE = 1.150
+			# params=M2Kernel.Params(KCPU=3.2672845157080244, KTemp=0.27811782995435014, TauCPU=np.float64(0.06603239807557451), TauTemp=np.float64(0.18592294666152198))	# RMSE = 0.985
+			# params=M2Kernel.Params(KCPU=4.838110172690417, KTemp=0.6594080619235382, TauCPU=np.float64(0.12214871259156063), TauTemp=np.float64(0.4990802997780703))		# RMSE = 0.977
+			),
+		M2Optimizer(global_min_loss = 0.5, training_duration = timedelta(seconds=10), composition='any', 
+			training_stop_flags = M2Optimizer.StopConditions.GLOBAL_MIN_LOSS 
+								| M2Optimizer.StopConditions.GLOBAL_MAX_DURATION 
+			)
 	)
-	m2obj.fit(df['CPU'].to_frame(), df['Temp'])
-	pred=m2obj.predict(df['CPU'].to_frame())
-	pred=pd.Series(pred, index=df.index)
-	fig, ax = plt.subplots(1)
-	ax.plot(df['Temp'], label='Reference' , lw=1)
-	ax.plot(pred, label='Prediction', lw=2)
-	ax.legend()
-	plt.show(block=True)
+	m2obj.fit(plot = (plot := True),
+		X = df2['CPU'].to_frame(),
+		y = df2['Temp'], 			
+		)						# options
+	m2pred=m2obj.predict(df2['CPU'].to_frame())
+	m2pred=pd.Series(m2pred, index=df2.index)
+	if plot:
+		fig2, ax2 = plt.subplots(1)
+		ax2.set_title('M2 predictions')
+		ax2.plot(df2['Temp'], label='Reference', lw=1)
+		ax2.plot(m2pred, label='Prediction', lw=2)
+		ax2.legend()
+		plt.show(block=True)
+
+	m3_source_col = 'Temp'
+	df3=df2.loc[:,df2.columns != m3_source_col].copy(deep=True)
+	target_col = 'Temp_residue'
+	df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
+
+	m3obj=M3(plotstyle=get_plotstlye('ICAR2025'))
+	test_idx = m3obj.cross_validation(
+		df3.loc[:,df3.columns != target_col],	# X
+		df3.loc[:,target_col],					# y
+		n_splits=3, plot=True)					# options
+	# m3pred = m3obj.predict(df3.loc[:,df3.columns != target_col])
+
+	# fig3, ax3 = plt.subplots(1)
+	# ax3.set_title('M3 predictions')
+	# ax3.plot(df3[target_col], label='Reference', lw=1)
+	# ax3.plot(m3pred[test_idx], label='Prediction', lw=2)
+	# ax3.legend()
+	# plt.show(block=True)
+
 

@@ -2,6 +2,7 @@ from bagpy import bagreader
 import pandas as pd
 import re
 import matplotlib.pyplot as plt
+from datetime import timedelta
 
 #%% Resolve telemetry variable
 import tellib
@@ -173,7 +174,7 @@ def calcfeatures(tel: pd.DataFrame) -> pd.DataFrame:
 	features=[
 				#'T_CPU',
 				#'i_B1','i_B1_avg','i_B2','i_B2_avg',
-				#'i_M1','i_M2','i_M3','i_M4',
+				'i_M1','i_M2','i_M3','i_M4',
 				# 'T_CPU_trend',# 'T_CPU_detrend',
 				# 'T_CPU_trend_lag1','T_CPU_trend_lag2','T_CPU_trend_lag3','T_CPU_trend_lag4',
 				# 'CPU_0','CPU_1','CPU_2','CPU_3','CPU_4','CPU_5','CPU_6','CPU_7',
@@ -198,35 +199,50 @@ def calcfeatures(tel: pd.DataFrame) -> pd.DataFrame:
 	
 	return df.dropna()
 df=calcfeatures(tel)
+df=df[df.index<2790]			# cull dataset before temperature peak
+df['CPU'] = df['CPU']/100		# in place of systematic normalization, just scale CPU usage to 0-1 range
 def calc_temp_amp(df):
 	return df.loc[df.index<=10,'T_CPU'].mean()
-df=df[df.index<2790]
+df2=df[['T_CPU','CPU']].copy(deep=True)
 
 #%%  Define and instantiate DDS model components
-from ddslib import M2, M2Kernel, M2Optimizer
+from ddslib import M2, M2Kernel, M2Optimizer, M3, get_plotstlye
 m2obj=M2(
-	M2Kernel(lambda cpu: cpu**2, lambda temp_current, temp_ext: temp_current-temp_ext, 
-		# params=M2Kernel.Params(KCPU=4.0, KTemp=0.1, TauCPU=0.1, TauTemp=0.05),
-		params=M2Kernel.Params(KCPU=3.0, KTemp=0.2, TauCPU=0.3, TauTemp=0.1),
-		TempAmb=calc_temp_amp(df), Dt=(df.index[-1]-df.index[0])/len(df)),
-	M2Optimizer(max_iter=1000, composition='all', training_stop_flags=
-		M2Optimizer.StopConditions.GLOBAL_MIN_LOSS | 
-		M2Optimizer.StopConditions.GLOBAL_MAX_ITERATIONS)
+	M2Kernel(lambda cpu: cpu**2, lambda temp_current, temp_ext: temp_current-temp_ext, TempAmb=calc_temp_amp(df2), Dt=(df2.index[-1]-df2.index[0])/len(df2),
+		param_space=M2Kernel.ParamSpace(KCPU=(1e-5,10), KTemp=(1e-5,1), TauCPU=(1e-9,2), TauTemp=(1e-9,2)),
+		# params=M2Kernel.Params(KCPU=0.8955001304094646, KTemp=0.0008084840447585498, TauCPU=0.7114574813747837, TauTemp=0.4034388338443532),		# RMSE = 1.249
+		# params=M2Kernel.Params(KCPU=0.7994835811720532, KTemp=0.0012296959998389521, TauCPU=0.814607170204983, TauTemp=0.9513807657573216),		# RMSE = 1.398
+		params=M2Kernel.Params(KCPU=0.9661344533627875, KTemp=0.0016280793961810907, TauCPU=0.8349590176487286, TauTemp=0.9907842974965935),		# RMSE = 1.171
+	),
+	M2Optimizer(training_duration=timedelta(seconds=10), composition='any', 
+		training_stop_flags = M2Optimizer.StopConditions.GLOBAL_MIN_LOSS 
+							| M2Optimizer.StopConditions.GLOBAL_MAX_DURATION
+				)
 )
-m2obj.fit(df['CPU'].to_frame(), df['T_CPU'])
-print(m2obj.get_model_params())
-pred=m2obj.predict(df['CPU'].to_frame()/100)
-pred=pd.Series(pred, index=df.index)
+m2target_col = 'T_CPU'
+m2obj.fit(df2['CPU'].to_frame(), df2[m2target_col], plot=(plot:=True))
+m2pred=m2obj.predict(df2['CPU'].to_frame())
+m2pred=pd.Series(m2pred, index=df2.index)
+if plot:
+	fig, ax = plt.subplots(1,figsize=(10,6))
+	ax.plot(df2['T_CPU'], label='Reference', lw=1)
+	ax.plot(m2pred, label='Prediction', lw=2)
+	ax.grid(which='major', color='#e0e0e0', linewidth=1.5)
+	ax.grid(which='minor', color='#f0f0f0', linewidth=1)
+	ax.set_ylabel('CPU temperature '+r'$[°C]$', fontsize=14)
+	ax.set_xlabel('Time [s]', fontsize=14)
+	ax.set_facecolor('#fafafa')
+	ax.legend()
+	plt.show()
 
-fig, ax = plt.subplots(1,figsize=(10,6))
-ax.plot(df['T_CPU'], label='Reference', lw=1)
-ax.plot(pred, label='Prediction', lw=2)
-ax.grid(which='major', color='#e0e0e0', linewidth=1.5)
-ax.grid(which='minor', color='#f0f0f0', linewidth=1)
-ax.set_ylabel('CPU temperature '+r'$[°C]$', fontsize=14)
-ax.set_xlabel('Time [s]', fontsize=14)
-ax.set_facecolor('#fafafa')
-ax.legend()
-plt.show()
+m3_source_col = m2target_col
+df3=df.loc[:,df.columns != m3_source_col].copy(deep=True)
+target_col = 'Temp_residue'
+df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
 
+m3obj=M3(n_estimators=100, plotstyle=get_plotstlye('ICAR2025'))
+test_idx = m3obj.cross_validation(
+	df3.loc[:,df3.columns != target_col],	# X
+	df3.loc[:,target_col],					# y
+	n_splits=3, plot=True)					# options
 
