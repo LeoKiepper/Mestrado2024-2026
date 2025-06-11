@@ -212,7 +212,8 @@ m2obj=M2(
 		param_space=M2Kernel.ParamSpace(KCPU=(1e-5,10), KTemp=(1e-5,1), TauCPU=(1e-9,2), TauTemp=(1e-9,2)),
 		# params=M2Kernel.Params(KCPU=0.8955001304094646, KTemp=0.0008084840447585498, TauCPU=0.7114574813747837, TauTemp=0.4034388338443532),		# RMSE = 1.249
 		# params=M2Kernel.Params(KCPU=0.7994835811720532, KTemp=0.0012296959998389521, TauCPU=0.814607170204983, TauTemp=0.9513807657573216),		# RMSE = 1.398
-		params=M2Kernel.Params(KCPU=0.9661344533627875, KTemp=0.0016280793961810907, TauCPU=0.8349590176487286, TauTemp=0.9907842974965935),		# RMSE = 1.171
+		# params=M2Kernel.Params(KCPU=0.9661344533627875, KTemp=0.0016280793961810907, TauCPU=0.8349590176487286, TauTemp=0.9907842974965935),		# RMSE = 1.171
+		params=M2Kernel.Params(KCPU=1.9967875200537128, KTemp=0.001738236948110962, TauCPU=1.7285830177591441, TauTemp=1.0368206944316354), 		# RMSE = 1.104
 	),
 	M2Optimizer(training_duration=timedelta(seconds=10), composition='any', 
 		training_stop_flags = M2Optimizer.StopConditions.GLOBAL_MIN_LOSS 
@@ -230,8 +231,11 @@ target_col = 'Temp_residue'
 df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
 
 m3obj=M3(n_estimators=1000, plotstyle=get_plotstlye('ICAR2025'))
-test_idx = m3obj.cross_validation(
-	df3.loc[:,df3.columns != target_col],	# X
-	df3.loc[:,target_col],					# y
-	n_splits=3, plot=True)					# options
+m3obj.fit(plot = 	(plot := True),
+	X = df3.loc[:,df3.columns != target_col],	
+	y = df3.loc[:,target_col],
+	)
+m3obj.predict(plot = plot,			against=df3[target_col],
+	X = df3.loc[:,df3.columns != target_col]
+	)
 

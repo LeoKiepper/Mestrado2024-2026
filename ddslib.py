@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import numpy as np, pandas as pd, matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.container import StemContainer
+import matplotlib.colors as mcolors
 import matplotlib; matplotlib.use('QtAgg')
 import xgboost as xgb
 from datetime import timedelta
@@ -31,9 +32,11 @@ class PlotStyle:
 	facecolor: str = '#fafafa'
 	title_fontsize: int = 12
 	axislabel_fontsize: int = 12
-	score_history_title: str = ''
-	score_history_xlabel: str = ''
-	score_history_ylabel: str = ''
+	M2_training_score_history_title: str = ''
+	M2_training_score_history_xlabel: str = ''
+	M2_training_score_history_ylabel: str = ''
+	M2_partial_prediction_title: str = ''
+	M3_partial_prediction_title: str = ''
 	time_unit_annotation = r' $[s]$'
 	temperature_unit_annotation = r' $[°C]$'
 	grid_options: list = field(default_factory=lambda: [
@@ -52,10 +55,12 @@ class PlotStyle:
 	def localize(self, lang='en'):
 		self.prediction_plot_options['label'] = {'en': 'Prediction', 'pt': 'Predição'}[lang]
 		self.reference_plot_options['label'] = {'en': 'Reference', 'pt': 'Referência'}[lang]
-		self.score_history_title = {'en': 'Score History', 'pt': 'Histórico do score'}[lang]
-		self.score_history_xlabel = {'en': 'Iteration', 'pt': 'Iteração'}[lang]
+		self.M2_training_score_history_title = {'en': 'Score History', 'pt': 'Histórico do score'}[lang]
+		self.M2_training_score_history_xlabel = {'en': 'Iteration', 'pt': 'Iteração'}[lang]
 		self.predictions_xlabel = {'en': 'Time', 'pt': 'Tempo'}[lang] + self.time_unit_annotation
 		self.predictions_ylabel = {'en': 'Temperature', 'pt': 'Temperatura'}[lang] + self.temperature_unit_annotation 
+		self.M2_partial_prediction_title = {'en': 'M2 prediction', 'pt': 'Predição M2'}[lang]
+		self.M3_partial_prediction_title = {'en': 'M3 prediction', 'pt': 'Predição M3'}[lang]
 
 def get_plotstlye(publication):
 
@@ -68,7 +73,7 @@ def get_plotstlye(publication):
 			ps = PlotStyle(layout='two-column')
 			ps.localize(lang='en')
 
-	ps.score_history_ylabel = infer_score_ylabel(M2Optimizer.score)
+	ps.M2_training_score_history_ylabel = infer_score_ylabel(M2Optimizer.score)
 
 	return ps
 def infer_score_ylabel(score_fn):
@@ -109,8 +114,9 @@ class FunctionWrapper(ABC):
 	def __call__(self):
 		return
 
+
 class DDS(BaseEstimator, RegressorMixin):
-	def __init__(self, tel: pd.DataFrame, input_col: str, highcpudetector: callable, M1: callable, M2: callable, M3: callable):
+	def __init__(self, tel: pd.DataFrame, input_col: str, highcpudetector, M1, M2, M3):
 		"""
 			:param: tel: DataFrame containing the data to be analyzed.
 			:param: col: Column name in the DataFrame that contains the CPU usage data.
@@ -351,17 +357,17 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			import matplotlib.pyplot as plt
 			def sanitize_plotstyle(ps: PlotStyle):
 				if ps is None: ps = get_plotstlye('')
-				if not (isinstance(ps.score_history_title, str) and ps.score_history_title): 
-					ps.score_history_title = ''
-				if not (isinstance(ps.score_history_xlabel, str) and ps.score_history_xlabel): 
-					ps.score_history_xlabel = ''
-				if not (isinstance(ps.score_history_ylabel, str) and ps.score_history_ylabel): 
-					ps.score_history_ylabel = ''
+				if not (isinstance(ps.M2_training_score_history_title, str) and ps.M2_training_score_history_title): 
+					ps.M2_training_score_history_title = ''
+				if not (isinstance(ps.M2_training_score_history_xlabel, str) and ps.M2_training_score_history_xlabel): 
+					ps.M2_training_score_history_xlabel = ''
+				if not (isinstance(ps.M2_training_score_history_ylabel, str) and ps.M2_training_score_history_ylabel): 
+					ps.M2_training_score_history_ylabel = ''
 				if not (isinstance(ps.axislabel_fontsize, int) and ps.axislabel_fontsize > 0): 
 					ps.axislabel_fontsize = None
 				if not (isinstance(ps.title_fontsize, int) and ps.title_fontsize > 0): 
 					ps.title_fontsize = None
-				if not (isinstance(ps.facecolor, str) and ps.facecolor): 
+				if not mcolors.is_color_like(ps.facecolor):
 					ps.facecolor = None
 				if not (isinstance(ps.grid_options, list)): 
 					ps.grid_options = []
@@ -371,9 +377,9 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			fig, ax = plt.subplots(1)
 			x = range(len(data))
 			ax.plot(x, data)
-			ax.set_xlabel(PS.score_history_xlabel, fontsize=PS.axislabel_fontsize)
-			ax.set_ylabel(PS.score_history_ylabel, fontsize=PS.axislabel_fontsize)
-			ax.set_title(PS.score_history_title, fontsize=PS.title_fontsize)
+			ax.set_xlabel(PS.M2_training_score_history_xlabel, fontsize=PS.axislabel_fontsize)
+			ax.set_ylabel(PS.M2_training_score_history_ylabel, fontsize=PS.axislabel_fontsize)
+			ax.set_title(PS.M2_training_score_history_title, fontsize=PS.title_fontsize)
 			for grid_option in PS.grid_options: ax.grid(**grid_option)
 			ax.set_facecolor(PS.facecolor)
 			plt.show(block=True)
@@ -391,7 +397,7 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 					ps.reference_plot_options = {}
 				if not isinstance(ps.prediction_plot_options, dict):
 					ps.prediction_plot_options = {}
-				if not (isinstance(ps.facecolor, str) and ps.facecolor):
+				if not mcolors.is_color_like(ps.facecolor):
 					ps.facecolor = None
 				if not isinstance(ps.grid_options, list):
 					ps.grid_options = []
@@ -401,6 +407,8 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 					ps.predictions_xlabel = ''
 				if not (isinstance(ps.predictions_ylabel, str)):
 					ps.predictions_ylabel = ''
+				if not (isinstance(ps.M2_partial_prediction_title, str)):
+					ps.M2_partial_prediction_title = ''
 				return ps
 			PS = sanitize_plotstyle(self.plotstyle)
 
@@ -413,7 +421,7 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			for grid_option in PS.grid_options: ax.grid(**grid_option)
 			ax.set_xlabel(PS.predictions_xlabel, fontsize=PS.axislabel_fontsize)
 			ax.set_ylabel(PS.predictions_ylabel, fontsize=PS.axislabel_fontsize)
-
+			ax.set_title(PS.M2_partial_prediction_title, fontsize=PS.title_fontsize)
 			ax.legend(fontsize=PS.legend_fontsize)
 			plt.tight_layout()
 			plt.show(block=True)
@@ -702,7 +710,7 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 					ps.reference_plot_options = {}
 				if not isinstance(ps.prediction_plot_options, dict):
 					ps.prediction_plot_options = {}
-				if not (isinstance(ps.facecolor, str) and ps.facecolor):
+				if not mcolors.is_color_like(ps.facecolor):
 					ps.facecolor = None
 				if not isinstance(ps.grid_options, list):
 					ps.grid_options = []
@@ -731,6 +739,9 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 			"""
 			Plot predictions vs reference for a single fit (full dataset).
 			"""
+			if len(y_true) != len(y_pred):
+				warnings.warn("y_true and y_pred must have the same length.")
+				return
 			import matplotlib.pyplot as plt
 			def sanitize_plotstyle(ps: PlotStyle) -> PlotStyle:
 				if ps is None: ps = get_plotstlye('')
@@ -738,51 +749,62 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 					ps.reference_plot_options = {}
 				if not isinstance(ps.prediction_plot_options, dict):
 					ps.prediction_plot_options = {}
-				if not (isinstance(ps.facecolor, str) and ps.facecolor):
+				if not mcolors.is_color_like(ps.facecolor):
 					ps.facecolor = None
 				if not isinstance(ps.grid_options, list):
 					ps.grid_options = []
-				if not (isinstance(ps.legend_fontsize, int) and ps.legend_fontsize > 0):
+				if not (isinstance(ps.legend_fontsize, int) or ps.legend_fontsize <= 0):
 					ps.legend_fontsize = None
+				if not (isinstance(ps.predictions_xlabel, str)):
+					ps.predictions_xlabel = ''
+				if not (isinstance(ps.predictions_ylabel, str)):
+					ps.predictions_ylabel = ''
+				if not (isinstance(ps.M3_partial_prediction_title, str)):
+					ps.M3_partial_prediction_title = ''
 				return ps
 			PS = sanitize_plotstyle(self.plotstyle)
+
 			fig, ax = plt.subplots(1)
-			ax.plot(y_true, **PS.reference_plot_options)	# Reference line
-			ax.plot(y_pred, **PS.prediction_plot_options)	# Prediction line
+			if isinstance(y_true, pd.Series): x = y_true.index
+			else: x = range(len(y_true))
+			ax.plot(x, y_true, **PS.reference_plot_options)		# Reference line
+			ax.plot(x, y_pred, **PS.prediction_plot_options)	# Prediction line
 			ax.set_facecolor(PS.facecolor)
 			for grid_option in PS.grid_options: ax.grid(**grid_option)
+			ax.set_xlabel(PS.predictions_xlabel, fontsize=PS.axislabel_fontsize)
+			ax.set_ylabel(PS.predictions_ylabel, fontsize=PS.axislabel_fontsize)
+			ax.set_title(PS.M3_partial_prediction_title, fontsize=PS.title_fontsize)
 			ax.legend(fontsize=PS.legend_fontsize)
 			plt.tight_layout()
 			plt.show(block=True)
 
 		def __init__(self, plotstyle: PlotStyle = None):
 			self.plotstyle = plotstyle
-	def cross_validation(self, X, y, plot=True, n_splits = 5, split_units = '%', test_size = 20, gap_size = 10):
-		"""
-		Perform cross-validation on the dataset using TimeSeriesSplit.
-		:param X: Input features.
-		:param y: Target values.
-		:param plot: Whether to plot the results.
-		:param n_splits: Number of splits for cross-validation.
-		:param split_units: Units for split size, can be '%', 'index', or 'positions'.
-		:param test_size: Size of the test set, interpreted according to split_units.
-		:param gap_size: Size of the gap between train and test sets, interpreted according to split_units.
-		:return: Tuple of test indices, predicted values, and scores for each fold.
-		"""
+	def _compose_dataset_splitter(self, split_units, test_size, gap_size):
 		if split_units not in ['%','index','positions']:
 			raise ValueError("Unrecognized key for split_units. Must be either '%' for a percent (0 to 100) of the total length of dataset, 'index' for the same units used for values in the dataset's DataFrame.index, or 'positions' for basic integer indexation from 0 to len(dataset).")
 		if split_units == '%':
 			def split_dataset(X,y, n_splits):
 				TEST_SIZE = round(len(X) * test_size / 100.0)
 				GAP_SIZE = round(len(X) * gap_size / 100.0)
-				tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap=GAP_SIZE)
-				return tss.split(X,y)
+				if n_splits > 1:
+					tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap=GAP_SIZE)
+					return tss.split(X,y)
+				else:
+					test_idx = range(len(X) - TEST_SIZE, len(X))
+					train_idx = range(len(X) - TEST_SIZE - GAP_SIZE)
+					return train_idx, test_idx
 		if split_units == 'positions':
 			def split_dataset(X,y, n_splits):
 				TEST_SIZE = test_size
 				GAP_SIZE = gap_size
-				tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap_size=GAP_SIZE)
-				return tss.split(X,y)
+				if n_splits > 1:
+					tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap_size=GAP_SIZE)
+					return tss.split(X,y)
+				else:
+					test_idx = range(len(X) - TEST_SIZE, len(X))
+					train_idx = range(len(X) - TEST_SIZE - GAP_SIZE)
+					return train_idx, test_idx
 		if split_units == 'index':
 			def split_dataset(X,y, n_splits):
 				if not isinstance(X,pd.DataFrame):
@@ -795,15 +817,33 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 
 				TEST_SIZE = len(X)-pos_test_start
 				GAP_SIZE = pos_test_start-pos_gap_start
-				tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap_size=GAP_SIZE)
-				return tss.split(X,y)
+				if n_splits > 1:
+					tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap_size=GAP_SIZE)
+					return tss.split(X,y)
+				else:
+					test_idx = range(pos_test_start, len(X))
+					train_idx = range(pos_test_start - pos_gap_start)
+					return train_idx, test_idx
+		return split_dataset
+	def cross_validation(self, X, y, plot=True, n_splits = 5, split_units = '%', test_size = 20, gap_size = 10):
+		"""
+		Perform cross-validation on the dataset using TimeSeriesSplit.
+		:param X: Input features.
+		:param y: Target values.
+		:param plot: Whether to plot the results.
+		:param n_splits: Number of splits for cross-validation.
+		:param split_units: Units for split size, can be '%', 'index', or 'positions'.
+		:param test_size: Size of the test set, interpreted according to split_units.
+		:param gap_size: Size of the gap between train and test sets, interpreted according to split_units.
+		:return: Tuple of test indices, predicted values, and scores for each fold.
+		"""
 
 		X, y = check_X_y(X, y)
 		y = y.ravel()
 		y_tests, y_preds, scores, test_idx = [], [], [], []
-		for train_idx_fold, test_idx_fold in split_dataset(X, y, n_splits):
-			X_train, X_test = X[train_idx_fold], X[test_idx_fold]
-			y_train, y_test = y[train_idx_fold], y[test_idx_fold]
+		for train_idx_fold, test_idx_fold in self._compose_dataset_splitter(split_units,test_size,gap_size)(X, y, n_splits):
+			X_train, y_train = X[train_idx_fold], y[train_idx_fold]
+			X_test, y_test = X[test_idx_fold], y[test_idx_fold]
 			self.reg.fit(X_train, y_train, 
 				eval_set=[(X_train, y_train), (X_test, y_test)],
 				verbose=False)
@@ -816,13 +856,33 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 		if plot:
 			self.plotter.plot_crossvalidation(y_tests, y_preds, scores, list(range(n_splits)))
 		return test_idx, y_preds, scores
-	def predict(self, X):
-		return self.reg.predict(X)
+	def fit(self, X, y, plot=True, split_units = '%', test_size = 20, gap_size = 10):
+		train_idx, test_idx = self._compose_dataset_splitter(split_units,test_size,gap_size)(X, y, 1)
+		if not isinstance(X, (pd.DataFrame, pd.Series)):
+			X_train, X_test  = X[train_idx], X[test_idx]
+		else:
+			X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+		if not isinstance(y, (pd.DataFrame, pd.Series)):
+			y_train, y_test = y[train_idx], y[test_idx]
+		else:
+			y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+		X, y = check_X_y(X, y)
+		y = y.ravel()
+		self.reg.fit(X_train, y_train, 
+			eval_set=[(X_train, y_train), (X_test, y_test)],
+			verbose=False)
+		return self	
+	def predict(self, X, plot = True, against = []):
+		pred = self.reg.predict(X)
+		if plot: self.plotter.plot_prediction(against, pred)
+		return pred
 
 	def __init__(self, n_estimators=1000, early_stopping_rounds=20, learning_rate=0.001, plotstyle: PlotStyle = None):
 		self.n_estimators = n_estimators
 		self.early_stopping_rounds = early_stopping_rounds
 		self.learning_rate = learning_rate
+
+
 
 		self.reg = xgb.XGBRegressor(
 			n_estimators = self.n_estimators,						
@@ -1167,6 +1227,8 @@ if __name__ == "__main__":
 			return ChangePoints, Segments
 		return df
 	df2 = SythesizeDataset()	# Synthesize a dataset
+
+	
 	# ==================  Define and instantiate model components
 	m2obj=M2(
 		M2Kernel(lambda cpu: cpu**2, lambda temp_current, temp_ext: temp_current-temp_ext, TempAmb=40, Dt=30/510,
@@ -1183,11 +1245,11 @@ if __name__ == "__main__":
 			),
 		plotstyle=get_plotstlye('ICAR2025')
 	)
-	m2obj.fit(plot = 							(plot := True),
+	m2obj.fit(plot = 							(PP := True),
 		X = df2['CPU'].to_frame(),
-		y = df2['Temp'], 			
+		y = df2['Temp'],
 		)						# options
-	m2pred=m2obj.predict(df2['CPU'].to_frame(),  plot = plot, against=df2['Temp'])
+	m2pred=m2obj.predict(df2['CPU'].to_frame(),  plot = PP, against=df2['Temp'])
 
 	m3_source_col = 'Temp'
 	df3=df2.loc[:,df2.columns != m3_source_col].copy(deep=True)
@@ -1195,18 +1257,14 @@ if __name__ == "__main__":
 	df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
 
 	m3obj=M3(plotstyle=get_plotstlye('ICAR2025'))
-	test_idx = m3obj.cross_validation(plot = 	(plot := True),
+	m3obj.cross_validation(plot = 	(PP := True),
 		X = df3.loc[:,df3.columns != target_col],	
 		y = df3.loc[:,target_col],					
 		n_splits=3
 		)					# options
-	# m3pred = m3obj.predict(df3.loc[:,df3.columns != target_col])
-
-	# fig3, ax3 = plt.subplots(1)
-	# ax3.set_title('M3 predictions')
-	# ax3.plot(df3[target_col], label='Reference', lw=1)
-	# ax3.plot(m3pred[test_idx], label='Prediction', lw=2)
-	# ax3.legend()
-	# plt.show(block=True)
-
+	m3obj.fit(plot = 				(PP := True),
+		X = df3.loc[:,df3.columns != target_col],	
+		y = df3.loc[:,target_col],
+		)
+	m3obj.predict(df3.loc[:,df3.columns != target_col], plot = PP, against=df3[target_col])
 
