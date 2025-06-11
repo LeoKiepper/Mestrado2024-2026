@@ -5,19 +5,17 @@ import inspect, ast, textwrap, warnings
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.utils.validation import check_X_y, check_array
 from sklearn.linear_model import SGDRegressor
-from sklearn.model_selection import GridSearchCV
-from sklearn.model_selection import TimeSeriesSplit
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 import math, time
+from datetime import timedelta
 from tqdm.auto import tqdm
 from typing import Callable, List
-from types import SimpleNamespace
+import xgboost as xgb
 import numpy as np, pandas as pd, matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.container import StemContainer
 import matplotlib.colors as mcolors
 import matplotlib; matplotlib.use('QtAgg')
-import xgboost as xgb
-from datetime import timedelta
 _STARTING_SCORE = float('-inf')
 
 
@@ -61,7 +59,6 @@ class PlotStyle:
 		self.predictions_ylabel = {'en': 'Temperature', 'pt': 'Temperatura'}[lang] + self.temperature_unit_annotation 
 		self.M2_partial_prediction_title = {'en': 'M2 prediction', 'pt': 'Predição M2'}[lang]
 		self.M3_partial_prediction_title = {'en': 'M3 prediction', 'pt': 'Predição M3'}[lang]
-
 def get_plotstlye(publication):
 
 	# Set publications specific parameter tweaks 
@@ -1228,7 +1225,7 @@ if __name__ == "__main__":
 		return df
 	df2 = SythesizeDataset()	# Synthesize a dataset
 
-	
+
 	# ==================  Define and instantiate model components
 	m2obj=M2(
 		M2Kernel(lambda cpu: cpu**2, lambda temp_current, temp_ext: temp_current-temp_ext, TempAmb=40, Dt=30/510,
