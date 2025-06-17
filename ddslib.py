@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from os import PathLike
+import os
 from sklearn.metrics import root_mean_squared_error
 import inspect, ast, textwrap, warnings
 from sklearn.base import BaseEstimator, RegressorMixin
@@ -9,7 +11,7 @@ from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 import math, time
 from datetime import timedelta
 from tqdm.auto import tqdm
-from typing import Callable, List
+from typing import IO, Callable, List
 import xgboost as xgb
 import numpy as np, pandas as pd, matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -30,17 +32,38 @@ class PlotStyle:
 	facecolor: str = '#fafafa'
 	title_fontsize: int = 12
 	axislabel_fontsize: int = 12
-	M2_training_score_history_title: str = ''
-	M2_training_score_history_xlabel: str = ''
-	M2_training_score_history_ylabel: str = ''
-	M2_partial_prediction_title: str = ''
-	M3_partial_prediction_title: str = ''
-	time_unit_annotation = r' $[s]$'
-	temperature_unit_annotation = r' $[°C]$'
+	time_unit_annotation: str = r' $[s]$'
+	temperature_unit_annotation: str = r' $[°C]$'
 	grid_options: list = field(default_factory=lambda: [
 		{'which': 'major', 'color': '#e0e0e0', 'linewidth': 1.5},
 		{'which': 'minor', 'color': '#f0f0f0', 'linewidth': 1, 'ls': '--'}
 	])
+	savefig_bbox_inches: str = 'tight'
+	save_figure_extension: str = 'svg'		# This is a fallback extension, for when the filename does not provide one.
+	save_with_title = False	# if True, the figure title is drawn before the figure is saved and will show on the saved file.
+
+	# =================== Figure specific parameters ===================
+	# figure specific strings that are initialized as empty
+	# strings are to be set by the get_plotstlye function.
+	M2_training_score_history_title: str = ''
+	M2_training_score_history_xlabel: str = ''
+	M2_training_score_history_ylabel: str = ''
+	M2_training_score_history_filename: str = 'M2_training_score_history'
+	M2_training_score_history_savefig: bool = False
+
+	M2_partial_prediction_title: str = ''
+	M2_partial_prediction_filename: str = 'M2_partial_prediction'
+	M2_partial_prediction_savefig: bool = True
+
+	M3_crossvalidation_title: str = ''
+	M3_crossvalidation_filename: str = 'M3_crossvalidation'
+	M3_crossvalidation_savefig: bool = False
+
+	M3_partial_prediction_title: str = ''
+	M3_partial_prediction_ylabel: str = ''
+	M3_partial_prediction_filename: str = 'M3_partial_prediction'
+	M3_partial_prediction_savefig: bool = True
+
 	def __post_init__(self):	# layout specific parameters
 		if self.layout == 'two-column':
 			self.crossvalidation_figsize: callable = lambda n: (8, 2.5 * n)
@@ -59,6 +82,25 @@ class PlotStyle:
 		self.predictions_ylabel = {'en': 'Temperature', 'pt': 'Temperatura'}[lang] + self.temperature_unit_annotation 
 		self.M2_partial_prediction_title = {'en': 'M2 prediction', 'pt': 'Predição M2'}[lang]
 		self.M3_partial_prediction_title = {'en': 'M3 prediction', 'pt': 'Predição M3'}[lang]
+		self.M3_partial_prediction_ylabel = {'en': 'Temperature difference', 'pt': 'Diferença de temperatura'}[lang] + self.temperature_unit_annotation
+		self.M3_crossvalidation_title = {'en': 'M3 Cross-validation', 'pt': 'Validação cruzada M3'}[lang]
+	@staticmethod
+	def compose_savefig_options(fname: str | PathLike | IO, format: str = '', **kwargs) -> dict:
+		fname = str(fname)
+		_, ext = os.path.splitext(fname)
+		if ext: format = ext
+		format = format.lstrip('.').lower()	# lower converts to lowercase
+		fname = f"{fname}.{format}"
+		return {'fname': fname, 'format': format, **kwargs}
+	@staticmethod
+	def compose_set_title_options(label: str, **kwargs):
+		return {'label': label} | kwargs
+	def settitle_and_savefig(fig: plt.Figure, ax: plt.Axes, savefig_options: dict = {}, set_title_options: dict = {}, savefig: bool = True, save_with_title: bool = False):
+			if isinstance(ax, (list, np.ndarray)): ax = ax[0]
+			set_title = lambda: ax.set_title(**set_title_options)
+			if save_with_title: set_title()
+			if savefig: fig.savefig(**savefig_options)
+			if not save_with_title: set_title()
 def get_plotstlye(publication):
 
 	# Set publications specific parameter tweaks 
@@ -354,12 +396,18 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			import matplotlib.pyplot as plt
 			def sanitize_plotstyle(ps: PlotStyle):
 				if ps is None: ps = get_plotstlye('')
-				if not (isinstance(ps.M2_training_score_history_title, str) and ps.M2_training_score_history_title): 
+				if not (isinstance(ps.M2_training_score_history_title, str)): 
 					ps.M2_training_score_history_title = ''
-				if not (isinstance(ps.M2_training_score_history_xlabel, str) and ps.M2_training_score_history_xlabel): 
+				if not (isinstance(ps.M2_training_score_history_xlabel, str)): 
 					ps.M2_training_score_history_xlabel = ''
-				if not (isinstance(ps.M2_training_score_history_ylabel, str) and ps.M2_training_score_history_ylabel): 
+				if not (isinstance(ps.M2_training_score_history_ylabel, str)): 
 					ps.M2_training_score_history_ylabel = ''
+				if not (isinstance(ps.M2_training_score_history_filename, str)): 
+					ps.M2_training_score_history_filename = 'M2_training_score_history'
+				if not (isinstance(ps.save_figure_extension, str)): 
+					ps.save_figure_extension = 'svg'
+				if not (isinstance(ps.savefig_bbox_inches, str)): 
+					ps.savefig_bbox_inches = 'tight'
 				if not (isinstance(ps.axislabel_fontsize, int) and ps.axislabel_fontsize > 0): 
 					ps.axislabel_fontsize = None
 				if not (isinstance(ps.title_fontsize, int) and ps.title_fontsize > 0): 
@@ -376,9 +424,21 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			ax.plot(x, data)
 			ax.set_xlabel(PS.M2_training_score_history_xlabel, fontsize=PS.axislabel_fontsize)
 			ax.set_ylabel(PS.M2_training_score_history_ylabel, fontsize=PS.axislabel_fontsize)
-			ax.set_title(PS.M2_training_score_history_title, fontsize=PS.title_fontsize)
 			for grid_option in PS.grid_options: ax.grid(**grid_option)
 			ax.set_facecolor(PS.facecolor)
+			PlotStyle.settitle_and_savefig(fig, ax,
+				savefig_options=PlotStyle.compose_savefig_options(
+					fname=PS.M2_training_score_history_filename, 
+					format=PS.save_figure_extension, 
+					bbox_inches='tight'
+				),
+				set_title_options=PlotStyle.compose_set_title_options(
+					label=PS.M2_training_score_history_title, 
+					fontsize=PS.title_fontsize
+				),
+				savefig=PS.M2_training_score_history_savefig,
+				save_with_title=PS.save_with_title
+			)
 			plt.show(block=True)
 		def plot_prediction(self, y_true, y_pred, **kwargs):
 			"""
@@ -406,6 +466,12 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 					ps.predictions_ylabel = ''
 				if not (isinstance(ps.M2_partial_prediction_title, str)):
 					ps.M2_partial_prediction_title = ''
+				if not (isinstance(ps.M2_partial_prediction_filename, str)): 
+					ps.M2_partial_prediction_filename = 'M2_partial_prediction'
+				if not (isinstance(ps.save_figure_extension, str)): 
+					ps.save_figure_extension = 'svg'
+				if not (isinstance(ps.savefig_bbox_inches, str)): 
+					ps.savefig_bbox_inches = 'tight'
 				return ps
 			PS = sanitize_plotstyle(self.plotstyle)
 
@@ -418,9 +484,20 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			for grid_option in PS.grid_options: ax.grid(**grid_option)
 			ax.set_xlabel(PS.predictions_xlabel, fontsize=PS.axislabel_fontsize)
 			ax.set_ylabel(PS.predictions_ylabel, fontsize=PS.axislabel_fontsize)
-			ax.set_title(PS.M2_partial_prediction_title, fontsize=PS.title_fontsize)
 			ax.legend(fontsize=PS.legend_fontsize)
-			plt.tight_layout()
+			PlotStyle.settitle_and_savefig(fig, ax,
+				savefig_options=PlotStyle.compose_savefig_options(
+					fname=PS.M2_partial_prediction_filename, 
+					format=PS.save_figure_extension, 
+					bbox_inches=PS.savefig_bbox_inches
+				),
+				set_title_options=PlotStyle.compose_set_title_options(
+					label=PS.M2_partial_prediction_title, 
+					fontsize=PS.title_fontsize
+				),
+				savefig=PS.M2_partial_prediction_savefig,
+				save_with_title=PS.save_with_title
+			)
 			plt.show(block=True)
 
 	class StopConditions:
@@ -687,7 +764,6 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 class M3(ABC,BaseEstimator, RegressorMixin):
 	class Plotter:
 		def plot_crossvalidation(self, y_tests, y_preds, scores, fold_indices):
-			import matplotlib.pyplot as plt
 			def sanitize_plotstyle(ps: PlotStyle) -> PlotStyle:
 				if ps is None: ps = get_plotstlye('')
 				def _is_valid_figsize_callable(obj):
@@ -715,6 +791,14 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 					ps.annotate_fontsize = None
 				if not (isinstance(ps.legend_fontsize, int) and ps.legend_fontsize > 0):
 					ps.legend_fontsize = None
+				if not (isinstance(ps.M3_crossvalidation_filename, str)): 
+					ps.M3_crossvalidation_filename = 'M3_crossvalidation'
+				if not (isinstance(ps.M3_crossvalidation_title, str)): 
+					ps.M3_crossvalidation_title = ''
+				if not (isinstance(ps.save_figure_extension, str)): 
+					ps.save_figure_extension = 'svg'
+				if not (isinstance(ps.savefig_bbox_inches, str)): 
+					ps.savefig_bbox_inches = 'tight'
 				return ps
 			PS = sanitize_plotstyle(self.plotstyle)
 			n_folds = len(fold_indices)
@@ -730,7 +814,21 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 				ax[ff].annotate(f'RMSE = {scores[ff]:0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
 					fontsize=PS.annotate_fontsize, horizontalalignment='right', verticalalignment='bottom')
 				ax[ff].legend(loc='lower center', fontsize=PS.legend_fontsize)
-			plt.tight_layout()
+			# prints a shared y axis label
+			fig.text(0.05, 0.5, PS.M3_partial_prediction_ylabel, va='center', rotation='vertical', fontsize = PS.axislabel_fontsize)
+			PlotStyle.settitle_and_savefig(fig, ax,
+				savefig_options=PlotStyle.compose_savefig_options(
+					fname=PS.M3_crossvalidation_filename, 
+					format=PS.save_figure_extension, 
+					bbox_inches=PS.savefig_bbox_inches
+				),
+				set_title_options=PlotStyle.compose_set_title_options(
+					label=PS.M3_crossvalidation_title, 
+					fontsize=PS.title_fontsize
+				),
+				savefig=PS.M3_crossvalidation_savefig,
+				save_with_title=PS.save_with_title
+			)
 			plt.show(block=True)
 		def plot_prediction(self, y_true, y_pred, **kwargs):
 			"""
@@ -758,6 +856,14 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 					ps.predictions_ylabel = ''
 				if not (isinstance(ps.M3_partial_prediction_title, str)):
 					ps.M3_partial_prediction_title = ''
+				if not (isinstance(ps.M3_partial_prediction_ylabel, str)):
+					ps.M3_partial_prediction_title = ''
+				if not (isinstance(ps.M3_partial_prediction_filename, str)): 
+					ps.M3_partial_prediction_filename = 'M3_partial_prediction'
+				if not (isinstance(ps.save_figure_extension, str)): 
+					ps.save_figure_extension = 'svg'
+				if not (isinstance(ps.savefig_bbox_inches, str)): 
+					ps.savefig_bbox_inches = 'tight'
 				return ps
 			PS = sanitize_plotstyle(self.plotstyle)
 
@@ -769,10 +875,22 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 			ax.set_facecolor(PS.facecolor)
 			for grid_option in PS.grid_options: ax.grid(**grid_option)
 			ax.set_xlabel(PS.predictions_xlabel, fontsize=PS.axislabel_fontsize)
-			ax.set_ylabel(PS.predictions_ylabel, fontsize=PS.axislabel_fontsize)
-			ax.set_title(PS.M3_partial_prediction_title, fontsize=PS.title_fontsize)
+			ylabel = PS.M3_partial_prediction_ylabel or PS.predictions_ylabel
+			ax.set_ylabel(ylabel, fontsize=PS.axislabel_fontsize)
 			ax.legend(fontsize=PS.legend_fontsize)
-			plt.tight_layout()
+			PlotStyle.settitle_and_savefig(fig, ax,
+				savefig_options=PlotStyle.compose_savefig_options(
+					fname=PS.M3_partial_prediction_filename, 
+					format=PS.save_figure_extension, 
+					bbox_inches=PS.savefig_bbox_inches
+				),
+				set_title_options=PlotStyle.compose_set_title_options(
+					label=PS.M3_partial_prediction_title, 
+					fontsize=PS.title_fontsize
+				),
+				savefig=PS.M3_partial_prediction_savefig,
+				save_with_title=PS.save_with_title
+			)
 			plt.show(block=True)
 
 		def __init__(self, plotstyle: PlotStyle = None):
