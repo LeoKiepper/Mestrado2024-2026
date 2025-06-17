@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from os import PathLike
 import os
+from matplotlib.font_manager import FontProperties, findfont
 from sklearn.metrics import root_mean_squared_error
 import inspect, ast, textwrap, warnings
 from sklearn.base import BaseEstimator, RegressorMixin
@@ -26,64 +27,6 @@ class PlotStyle:
 	"""
 	This class is meant to be used indirectly through the get_plotstlye function
 	"""
-	layout: str = 'two-column'
-	prediction_plot_options: dict = field(default_factory=lambda: {'lw':2, 'label':'Prediction', 'color':'C1'})
-	reference_plot_options: dict = field(default_factory=lambda: {'lw':1, 'label':'Reference', 'color':'C0'})
-	facecolor: str = '#fafafa'
-	title_fontsize: int = 12
-	axislabel_fontsize: int = 12
-	time_unit_annotation: str = r' $[s]$'
-	temperature_unit_annotation: str = r' $[°C]$'
-	grid_options: list = field(default_factory=lambda: [
-		{'which': 'major', 'color': '#e0e0e0', 'linewidth': 1.5},
-		{'which': 'minor', 'color': '#f0f0f0', 'linewidth': 1, 'ls': '--'}
-	])
-	savefig_bbox_inches: str = 'tight'
-	save_figure_extension: str = 'svg'		# This is a fallback extension, for when the filename does not provide one.
-	save_with_title = False	# if True, the figure title is drawn before the figure is saved and will show on the saved file.
-
-	# =================== Figure specific parameters ===================
-	# figure specific strings that are initialized as empty
-	# strings are to be set by the get_plotstlye function.
-	M2_training_score_history_title: str = ''
-	M2_training_score_history_xlabel: str = ''
-	M2_training_score_history_ylabel: str = ''
-	M2_training_score_history_filename: str = 'M2_training_score_history'
-	M2_training_score_history_savefig: bool = False
-
-	M2_partial_prediction_title: str = ''
-	M2_partial_prediction_filename: str = 'M2_partial_prediction'
-	M2_partial_prediction_savefig: bool = True
-
-	M3_crossvalidation_title: str = ''
-	M3_crossvalidation_filename: str = 'M3_crossvalidation'
-	M3_crossvalidation_savefig: bool = False
-
-	M3_partial_prediction_title: str = ''
-	M3_partial_prediction_ylabel: str = ''
-	M3_partial_prediction_filename: str = 'M3_partial_prediction'
-	M3_partial_prediction_savefig: bool = True
-
-	def __post_init__(self):	# layout specific parameters
-		if self.layout == 'two-column':
-			self.crossvalidation_figsize: callable = lambda n: (8, 2.5 * n)
-			self.annotate_fontsize: int = 12
-			self.legend_fontsize: int = 12
-		else:			# 'one-column'
-			self.crossvalidation_figsize: callable = lambda n: (6, 2.5 * n)
-			self.annotate_fontsize: int = 10
-			self.legend_fontsize: int = 10
-	def localize(self, lang='en'):
-		self.prediction_plot_options['label'] = {'en': 'Prediction', 'pt': 'Predição'}[lang]
-		self.reference_plot_options['label'] = {'en': 'Reference', 'pt': 'Referência'}[lang]
-		self.M2_training_score_history_title = {'en': 'Score History', 'pt': 'Histórico do score'}[lang]
-		self.M2_training_score_history_xlabel = {'en': 'Iteration', 'pt': 'Iteração'}[lang]
-		self.predictions_xlabel = {'en': 'Time', 'pt': 'Tempo'}[lang] + self.time_unit_annotation
-		self.predictions_ylabel = {'en': 'Temperature', 'pt': 'Temperatura'}[lang] + self.temperature_unit_annotation 
-		self.M2_partial_prediction_title = {'en': 'M2 prediction', 'pt': 'Predição M2'}[lang]
-		self.M3_partial_prediction_title = {'en': 'M3 prediction', 'pt': 'Predição M3'}[lang]
-		self.M3_partial_prediction_ylabel = {'en': 'Temperature difference', 'pt': 'Diferença de temperatura'}[lang] + self.temperature_unit_annotation
-		self.M3_crossvalidation_title = {'en': 'M3 Cross-validation', 'pt': 'Validação cruzada M3'}[lang]
 	@staticmethod
 	def compose_savefig_options(fname: str | PathLike | IO, format: str = '', **kwargs) -> dict:
 		fname = str(fname)
@@ -101,11 +44,86 @@ class PlotStyle:
 			if save_with_title: set_title()
 			if savefig: fig.savefig(**savefig_options)
 			if not save_with_title: set_title()
+	layout: str = 'two-column'
+	facecolor: str = '#fafafa'
+	label_fontfamily = 'Times New Roman'
+	time_unit_annotation: str = r' $[s]$'
+	temperature_unit_annotation: str = r' $[°C]$'
+	savefig_bbox_inches: str = 'tight'
+	save_figure_extension: str = 'svg'		# This is a fallback extension, for when the filename does not provide one.
+	save_with_title = False	# if True, the figure title is drawn before the figure is saved and will show on the saved file.
+
+	# =================== Figure specific parameters ===================
+	# figure specific strings that are initialized as empty
+	# strings are to be set by the get_plotstlye function.
+	M2_training_score_history_title: str = ''
+	M2_training_score_history_xlabel: str = ''
+	M2_training_score_history_ylabel: str = ''
+	M2_training_score_history_filename: str = 'M2_training_score_history'
+	M2_training_score_history_savefig: bool = False
+
+	M2_partial_prediction_title: str = ''
+	M2_partial_prediction_filename: str = 'M2_partial_predictions'
+	M2_partial_prediction_savefig: bool = True
+
+	M3_crossvalidation_title: str = ''
+	M3_crossvalidation_filename: str = 'M3_crossvalidation'
+	M3_crossvalidation_savefig: bool = False
+
+	M3_partial_prediction_title: str = ''
+	M3_partial_prediction_ylabel: str = ''
+	M3_partial_prediction_filename: str = 'M3_partial_predictions'
+	M3_partial_prediction_savefig: bool = True
+
+	def __post_init__(self):		# Layout specific parameters
+		if self.layout == 'two-column':
+			self.figsize = (3.6,2.7)	# matplotlib default is (6.4,4.8) inches
+			self.crossvalidation_figsize: callable = lambda n: (8, 2.5 * n)
+			# fontsizes are given in pt. 1 in = 72 pts
+			self.label_fontsize: int = 10
+			self.title_fontsize: int = 12
+			self.annotate_fontsize: int = 8
+			self.legend_fontsize: int = 7
+			self.tick_label_fontsize: int = 7
+
+			self.spine_linewidth: int = 0.5
+			self.prediction_plot_options: dict = {'lw':1.5, 'label':'Prediction', 'color':'C1'}
+			self.reference_plot_options: dict = {'lw':0.6, 'label':'Reference', 'color':'C0'}
+			self.grid_options: list = [
+				{'which': 'major', 'color': '#e0e0e0', 'linewidth': 0.6},
+				{'which': 'minor', 'color': '#f0f0f0', 'linewidth': 0.3, 'ls': '--'}
+			]
+		else:			# 'one-column'
+			self.crossvalidation_figsize: callable = lambda n: (6, 2.5 * n)
+			self.label_fontsize: int = 12
+			self.title_fontsize: int = 16
+			self.annotate_fontsize: int = 10
+			self.legend_fontsize: int = 10
+			self.tick_label_fontsize: int = 10
+
+			self.spine_linewidth: int = 1
+			self.prediction_plot_options: dict = {'lw':1.5, 'label':'Prediction', 'color':'C1'}
+			self.reference_plot_options: dict = {'lw':0.75, 'label':'Reference', 'color':'C0'}
+			self.grid_options: list = [
+				{'which': 'major', 'color': '#e0e0e0', 'linewidth': 0.6},
+				{'which': 'minor', 'color': '#f0f0f0', 'linewidth': 0.3, 'ls': '--'}
+			]
+	def localize(self, lang='en'):	# Localization for various strings
+		self.prediction_plot_options['label'] = {'en': 'Prediction', 'pt': 'Predição'}[lang]
+		self.reference_plot_options['label'] = {'en': 'Reference', 'pt': 'Referência'}[lang]
+		self.M2_training_score_history_title = {'en': 'Score History', 'pt': 'Histórico do score'}[lang]
+		self.M2_training_score_history_xlabel = {'en': 'Iteration', 'pt': 'Iteração'}[lang]
+		self.predictions_xlabel = {'en': 'Time', 'pt': 'Tempo'}[lang] + self.time_unit_annotation
+		self.predictions_ylabel = {'en': 'Temperature', 'pt': 'Temperatura'}[lang] + self.temperature_unit_annotation 
+		self.M2_partial_prediction_title = {'en': 'M2 prediction', 'pt': 'Predição M2'}[lang]
+		self.M3_partial_prediction_title = {'en': 'M3 prediction', 'pt': 'Predição M3'}[lang]
+		self.M3_partial_prediction_ylabel = {'en': 'Temperature difference', 'pt': 'Diferença de temperatura'}[lang] + self.temperature_unit_annotation
+		self.M3_crossvalidation_title = {'en': 'M3 Cross-validation', 'pt': 'Validação cruzada M3'}[lang]
 def get_plotstlye(publication):
 
 	# Set publications specific parameter tweaks 
 	match publication:
-		case 'ICAR2025': 	
+		case 'IEEE2025': 	
 			ps = PlotStyle(layout='two-column')
 			ps.localize(lang='en')
 		case _:	# None of the above		
@@ -138,7 +156,13 @@ def infer_score_ylabel(score_fn):
 				if key.lower() in name.lower():
 					return label
 	return "Score"
-
+def is_valid_font(fontname):
+    try:
+        prop = FontProperties(family=fontname)
+        fontpath = findfont(prop, fallback_to_default=False)
+        return True
+    except Exception:
+        return False
 
 
 class FunctionWrapper(ABC):
@@ -393,7 +417,6 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			self.plotstyle = plotstyle
 
 		def plot_training(self):
-			import matplotlib.pyplot as plt
 			def sanitize_plotstyle(ps: PlotStyle):
 				if ps is None: ps = get_plotstlye('')
 				if not (isinstance(ps.M2_training_score_history_title, str)): 
@@ -408,23 +431,34 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 					ps.save_figure_extension = 'svg'
 				if not (isinstance(ps.savefig_bbox_inches, str)): 
 					ps.savefig_bbox_inches = 'tight'
-				if not (isinstance(ps.axislabel_fontsize, int) and ps.axislabel_fontsize > 0): 
-					ps.axislabel_fontsize = None
-				if not (isinstance(ps.title_fontsize, int) and ps.title_fontsize > 0): 
+				if not (is_valid_font(ps.label_fontfamily)): 
+					ps.label_fontfamily = None
+				if not (isinstance(ps.label_fontsize, (int,float)) and ps.label_fontsize > 0): 
+					ps.label_fontsize = None
+				if not (isinstance(ps.title_fontsize, (int,float)) and ps.title_fontsize > 0): 
 					ps.title_fontsize = None
+				if not (isinstance(ps.tick_label_fontsize, (int,float)) and ps.tick_label_fontsize > 0): 
+					ps.tick_label_fontsize = None
+				if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
+					ps.spine_linewidth = None
 				if not mcolors.is_color_like(ps.facecolor):
 					ps.facecolor = None
 				if not (isinstance(ps.grid_options, list)): 
 					ps.grid_options = []
+				if not isinstance(ps.figsize,tuple) or len(ps.figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.figsize]):
+					ps.figsize = None
 				return ps
 			PS = sanitize_plotstyle(self.plotstyle)
 			data = self.data_source()
-			fig, ax = plt.subplots(1)
+			fig, ax = plt.subplots(1, figsize = PS.figsize)
 			x = range(len(data))
 			ax.plot(x, data)
-			ax.set_xlabel(PS.M2_training_score_history_xlabel, fontsize=PS.axislabel_fontsize)
-			ax.set_ylabel(PS.M2_training_score_history_ylabel, fontsize=PS.axislabel_fontsize)
+			ax.set_xlabel(PS.M2_training_score_history_xlabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+			ax.set_ylabel(PS.M2_training_score_history_ylabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+			ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)
 			for grid_option in PS.grid_options: ax.grid(**grid_option)
+			if PS.spine_linewidth is not None:
+				for spine in ax.spines.values(): spine.set_linewidth(PS.spine_linewidth)
 			ax.set_facecolor(PS.facecolor)
 			PlotStyle.settitle_and_savefig(fig, ax,
 				savefig_options=PlotStyle.compose_savefig_options(
@@ -434,7 +468,8 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 				),
 				set_title_options=PlotStyle.compose_set_title_options(
 					label=PS.M2_training_score_history_title, 
-					fontsize=PS.title_fontsize
+					fontsize=PS.title_fontsize,
+					fontname=PS.label_fontfamily
 				),
 				savefig=PS.M2_training_score_history_savefig,
 				save_with_title=PS.save_with_title
@@ -458,8 +493,10 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 					ps.facecolor = None
 				if not isinstance(ps.grid_options, list):
 					ps.grid_options = []
-				if not (isinstance(ps.legend_fontsize, int) and ps.legend_fontsize > 0):
+				if not (isinstance(ps.legend_fontsize, (int,float)) and ps.legend_fontsize > 0):
 					ps.legend_fontsize = None
+				if not (isinstance(ps.tick_label_fontsize, (int,float)) and ps.tick_label_fontsize > 0): 
+					ps.tick_label_fontsize = None
 				if not (isinstance(ps.predictions_xlabel, str)):
 					ps.predictions_xlabel = ''
 				if not (isinstance(ps.predictions_ylabel, str)):
@@ -472,19 +509,28 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 					ps.save_figure_extension = 'svg'
 				if not (isinstance(ps.savefig_bbox_inches, str)): 
 					ps.savefig_bbox_inches = 'tight'
+				if not (is_valid_font(ps.label_fontfamily)): 
+					ps.label_fontfamily = None
+				if not isinstance(ps.figsize,tuple) or len(ps.figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.figsize]):
+					ps.figsize = None
+				if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
+					ps.spine_linewidth = None
 				return ps
 			PS = sanitize_plotstyle(self.plotstyle)
 
-			fig, ax = plt.subplots(1)
+			fig, ax = plt.subplots(1, figsize=PS.figsize)
 			if isinstance(y_true, pd.Series): x = y_true.index
 			else: x = range(len(y_true))
 			ax.plot(x, y_true, **PS.reference_plot_options)		# Reference line
 			ax.plot(x, y_pred, **PS.prediction_plot_options)	# Prediction line
 			ax.set_facecolor(PS.facecolor)
 			for grid_option in PS.grid_options: ax.grid(**grid_option)
-			ax.set_xlabel(PS.predictions_xlabel, fontsize=PS.axislabel_fontsize)
-			ax.set_ylabel(PS.predictions_ylabel, fontsize=PS.axislabel_fontsize)
+			ax.set_xlabel(PS.predictions_xlabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+			ax.set_ylabel(PS.predictions_ylabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
 			ax.legend(fontsize=PS.legend_fontsize)
+			ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)
+			if PS.spine_linewidth is not None:
+				for spine in ax.spines.values(): spine.set_linewidth(PS.spine_linewidth)
 			PlotStyle.settitle_and_savefig(fig, ax,
 				savefig_options=PlotStyle.compose_savefig_options(
 					fname=PS.M2_partial_prediction_filename, 
@@ -493,7 +539,8 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 				),
 				set_title_options=PlotStyle.compose_set_title_options(
 					label=PS.M2_partial_prediction_title, 
-					fontsize=PS.title_fontsize
+					fontsize=PS.title_fontsize,
+					fontname=PS.label_fontfamily
 				),
 				savefig=PS.M2_partial_prediction_savefig,
 				save_with_title=PS.save_with_title
@@ -787,10 +834,12 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 					ps.facecolor = None
 				if not isinstance(ps.grid_options, list):
 					ps.grid_options = []
-				if not (isinstance(ps.annotate_fontsize, int) and ps.annotate_fontsize > 0):
+				if not (isinstance(ps.annotate_fontsize, (int,float)) and ps.annotate_fontsize > 0):
 					ps.annotate_fontsize = None
-				if not (isinstance(ps.legend_fontsize, int) and ps.legend_fontsize > 0):
+				if not (isinstance(ps.legend_fontsize, (int,float)) and ps.legend_fontsize > 0):
 					ps.legend_fontsize = None
+				if not (isinstance(ps.tick_label_fontsize, (int,float)) and ps.tick_label_fontsize > 0): 
+					ps.tick_label_fontsize = None
 				if not (isinstance(ps.M3_crossvalidation_filename, str)): 
 					ps.M3_crossvalidation_filename = 'M3_crossvalidation'
 				if not (isinstance(ps.M3_crossvalidation_title, str)): 
@@ -799,6 +848,12 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 					ps.save_figure_extension = 'svg'
 				if not (isinstance(ps.savefig_bbox_inches, str)): 
 					ps.savefig_bbox_inches = 'tight'
+				if not (is_valid_font(ps.label_fontfamily)): 
+					ps.label_fontfamily = None
+				if not isinstance(ps.figsize,tuple) or len(ps.figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.figsize]):
+					ps.figsize = None
+				if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
+					ps.spine_linewidth = None
 				return ps
 			PS = sanitize_plotstyle(self.plotstyle)
 			n_folds = len(fold_indices)
@@ -814,8 +869,12 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 				ax[ff].annotate(f'RMSE = {scores[ff]:0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
 					fontsize=PS.annotate_fontsize, horizontalalignment='right', verticalalignment='bottom')
 				ax[ff].legend(loc='lower center', fontsize=PS.legend_fontsize)
+				ax[ff].tick_params(axis='both', labelsize=PS.tick_label_fontsize)
+				if PS.spine_linewidth is not None:
+					for spine in ax[ff].spines.values(): spine.set_linewidth(PS.spine_linewidth)
 			# prints a shared y axis label
-			fig.text(0.05, 0.5, PS.M3_partial_prediction_ylabel, va='center', rotation='vertical', fontsize = PS.axislabel_fontsize)
+			fig.text(0.05, 0.5, PS.M3_partial_prediction_ylabel, va='center', rotation='vertical', fontsize = PS.label_fontsize, fontname=PS.label_fontfamily)
+			ax[-1].set_xlabel(PS.predictions_xlabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
 			PlotStyle.settitle_and_savefig(fig, ax,
 				savefig_options=PlotStyle.compose_savefig_options(
 					fname=PS.M3_crossvalidation_filename, 
@@ -824,7 +883,8 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 				),
 				set_title_options=PlotStyle.compose_set_title_options(
 					label=PS.M3_crossvalidation_title, 
-					fontsize=PS.title_fontsize
+					fontsize=PS.title_fontsize,
+					fontname=PS.label_fontfamily
 				),
 				savefig=PS.M3_crossvalidation_savefig,
 				save_with_title=PS.save_with_title
@@ -837,7 +897,6 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 			if len(y_true) != len(y_pred):
 				warnings.warn("y_true and y_pred must have the same length.")
 				return
-			import matplotlib.pyplot as plt
 			def sanitize_plotstyle(ps: PlotStyle) -> PlotStyle:
 				if ps is None: ps = get_plotstlye('')
 				if not isinstance(ps.reference_plot_options, dict):
@@ -848,8 +907,10 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 					ps.facecolor = None
 				if not isinstance(ps.grid_options, list):
 					ps.grid_options = []
-				if not (isinstance(ps.legend_fontsize, int) or ps.legend_fontsize <= 0):
+				if not (isinstance(ps.legend_fontsize, (int,float)) or ps.legend_fontsize <= 0):
 					ps.legend_fontsize = None
+				if not (isinstance(ps.tick_label_fontsize, (int,float)) and ps.tick_label_fontsize > 0): 
+					ps.tick_label_fontsize = None
 				if not (isinstance(ps.predictions_xlabel, str)):
 					ps.predictions_xlabel = ''
 				if not (isinstance(ps.predictions_ylabel, str)):
@@ -864,20 +925,29 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 					ps.save_figure_extension = 'svg'
 				if not (isinstance(ps.savefig_bbox_inches, str)): 
 					ps.savefig_bbox_inches = 'tight'
+				if not (is_valid_font(ps.label_fontfamily)): 
+					ps.label_fontfamily = None
+				if not isinstance(ps.figsize,tuple) or len(ps.figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.figsize]):
+					ps.figsize = None
+				if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
+					ps.spine_linewidth = None
 				return ps
 			PS = sanitize_plotstyle(self.plotstyle)
 
-			fig, ax = plt.subplots(1)
+			fig, ax = plt.subplots(1, figsize=PS.figsize)
 			if isinstance(y_true, pd.Series): x = y_true.index
 			else: x = range(len(y_true))
 			ax.plot(x, y_true, **PS.reference_plot_options)		# Reference line
 			ax.plot(x, y_pred, **PS.prediction_plot_options)	# Prediction line
 			ax.set_facecolor(PS.facecolor)
 			for grid_option in PS.grid_options: ax.grid(**grid_option)
-			ax.set_xlabel(PS.predictions_xlabel, fontsize=PS.axislabel_fontsize)
+			ax.set_xlabel(PS.predictions_xlabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
 			ylabel = PS.M3_partial_prediction_ylabel or PS.predictions_ylabel
-			ax.set_ylabel(ylabel, fontsize=PS.axislabel_fontsize)
+			ax.set_ylabel(ylabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
 			ax.legend(fontsize=PS.legend_fontsize)
+			ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)
+			if PS.spine_linewidth is not None:
+				for spine in ax.spines.values(): spine.set_linewidth(PS.spine_linewidth)
 			PlotStyle.settitle_and_savefig(fig, ax,
 				savefig_options=PlotStyle.compose_savefig_options(
 					fname=PS.M3_partial_prediction_filename, 
@@ -886,7 +956,8 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 				),
 				set_title_options=PlotStyle.compose_set_title_options(
 					label=PS.M3_partial_prediction_title, 
-					fontsize=PS.title_fontsize
+					fontsize=PS.title_fontsize,
+					fontname=PS.label_fontfamily
 				),
 				savefig=PS.M3_partial_prediction_savefig,
 				save_with_title=PS.save_with_title
@@ -1352,13 +1423,13 @@ if __name__ == "__main__":
 			# params=M2Kernel.Params(KCPU=5.354987897910978, KTemp= 2.8002979490801128, TauCPU=0.18629771646496662, TauTemp=0.9528960069986708),
 			# params=M2Kernel.Params(KCPU=8.328657109382513, KTemp=0.5493883896628988, TauCPU=np.float64(0.19189461891598183), TauTemp=np.float64(0.33700592667911833))		# RMSE = 1.150
 			# params=M2Kernel.Params(KCPU=3.2672845157080244, KTemp=0.27811782995435014, TauCPU=np.float64(0.06603239807557451), TauTemp=np.float64(0.18592294666152198))	# RMSE = 0.985
-			# params=M2Kernel.Params(KCPU=4.838110172690417, KTemp=0.6594080619235382, TauCPU=np.float64(0.12214871259156063), TauTemp=np.float64(0.4990802997780703))		# RMSE = 0.977
+			params=M2Kernel.Params(KCPU=4.838110172690417, KTemp=0.6594080619235382, TauCPU=np.float64(0.12214871259156063), TauTemp=np.float64(0.4990802997780703))		# RMSE = 0.977
 			),
-		M2Optimizer(global_min_loss = 0.5, training_duration = timedelta(seconds=10), composition='any', 
+		M2Optimizer(global_min_loss = 0.5, training_duration = timedelta(seconds=1), composition='any', 
 			training_stop_flags = M2Optimizer.StopConditions.GLOBAL_MIN_LOSS 
 								| M2Optimizer.StopConditions.GLOBAL_MAX_DURATION 
 			),
-		plotstyle=get_plotstlye('ICAR2025')
+		plotstyle=get_plotstlye('IEEE2025')
 	)
 	m2obj.fit(plot = 							(PP := True),
 		X = df2['CPU'].to_frame(),
@@ -1371,7 +1442,7 @@ if __name__ == "__main__":
 	target_col = 'Temp_residue'
 	df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
 
-	m3obj=M3(plotstyle=get_plotstlye('ICAR2025'))
+	m3obj=M3(plotstyle=get_plotstlye('IEEE2025'))
 	m3obj.cross_validation(plot = 	(PP := True),
 		X = df3.loc[:,df3.columns != target_col],	
 		y = df3.loc[:,target_col],					

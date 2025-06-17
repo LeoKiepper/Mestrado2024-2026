@@ -215,11 +215,11 @@ m2obj=M2(
 		# params=M2Kernel.Params(KCPU=0.9661344533627875, KTemp=0.0016280793961810907, TauCPU=0.8349590176487286, TauTemp=0.9907842974965935),		# RMSE = 1.171
 		params=M2Kernel.Params(KCPU=1.9967875200537128, KTemp=0.001738236948110962, TauCPU=1.7285830177591441, TauTemp=1.0368206944316354), 		# RMSE = 1.104
 	),
-	M2Optimizer(training_duration=timedelta(seconds=10), composition='any', 
+	M2Optimizer(training_duration=timedelta(seconds=1), composition='any', 
 		training_stop_flags = M2Optimizer.StopConditions.GLOBAL_MIN_LOSS 
 							| M2Optimizer.StopConditions.GLOBAL_MAX_DURATION
 				),
-	plotstyle=get_plotstlye('ICAR2025')
+	plotstyle=get_plotstlye('IEEE2025')
 )
 m2target_col = 'T_CPU'
 m2obj.fit(df2['CPU'].to_frame(), df2[m2target_col], plot=(plot:=True))
@@ -230,7 +230,7 @@ df3=df.loc[:,df.columns != m3_source_col].copy(deep=True)
 target_col = 'Temp_residue'
 df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
 
-m3obj=M3(n_estimators=1000, plotstyle=get_plotstlye('ICAR2025'))
+m3obj=M3(n_estimators=1000, plotstyle=get_plotstlye('IEEE2025'))
 m3obj.fit(plot = 	(plot := True),
 	X = df3.loc[:,df3.columns != target_col],	
 	y = df3.loc[:,target_col],
