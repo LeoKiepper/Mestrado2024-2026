@@ -49,8 +49,9 @@ class PlotStyle:
 	label_fontfamily = 'Times New Roman'
 	time_unit_annotation: str = r' $[s]$'
 	temperature_unit_annotation: str = r' $[°C]$'
+	percent_unit_annotation: str = r' $[\%]$'
 	savefig_bbox_inches: str = 'tight'
-	save_figure_extension: str = 'svg'		# This is a fallback extension, for when the filename does not provide one.
+	save_figure_extension: str = 'pdf'		# This is a fallback extension, for when the filename does not provide one.
 	save_with_title = False	# if True, the figure title is drawn before the figure is saved and will show on the saved file.
 
 	# =================== Figure specific parameters ===================
@@ -71,39 +72,58 @@ class PlotStyle:
 	M3_crossvalidation_savefig: bool = False
 
 	M3_partial_prediction_title: str = ''
-	M3_partial_prediction_ylabel: str = ''
+	ylabel_temperature_diff: str = ''
 	M3_partial_prediction_filename: str = 'M3_partial_predictions'
 	M3_partial_prediction_savefig: bool = True
 
+	full_dataset_title: str = ''
+	full_dataset_filename: str = 'Dataset_full'
+	full_dataset_savefig: bool = True
+
+	clipped_dataset_title: str = ''
+	clipped_dataset_filename: str = 'Dataset_clipped'
+	clipped_dataset_savefig: bool = False
+
+	CPU_load_feature_in_legend: str = ''
+	first_temp_peak_detail_title: str = ''
+	first_temp_peak_detail_filename: str = 'First_temp_peak_detail'
+	first_temp_peak_detail_savefig: bool = True
+	
 	def __post_init__(self):		# Layout specific parameters
 		if self.layout == 'two-column':
-			self.figsize = (3.6,2.7)	# matplotlib default is (6.4,4.8) inches
-			self.crossvalidation_figsize: callable = lambda n: (8, 2.5 * n)
-			# fontsizes are given in pt. 1 in = 72 pts
-			self.label_fontsize: int = 10
-			self.title_fontsize: int = 12
-			self.annotate_fontsize: int = 8
-			self.legend_fontsize: int = 7
-			self.tick_label_fontsize: int = 7
+			self.single_figsize = (3.6,2.7)	# matplotlib default is (6.4,4.8) inches
+			self.multiple_figsize: callable = lambda n: (3.6, 2.6 * n)
+			# fontsizes are given in pt. 	1 in = 72 pts
+			self.label_fontsize: float = 10
+			self.title_fontsize: float = 12
+			self.annotate_fontsize: float = 8
+			self.legend_fontsize: float = 7
+			self.tick_label_fontsize: float = 7
 
-			self.spine_linewidth: int = 0.5
-			self.prediction_plot_options: dict = {'lw':1.5, 'label':'Prediction', 'color':'C1'}
-			self.reference_plot_options: dict = {'lw':0.6, 'label':'Reference', 'color':'C0'}
+			self.linewidth_thin: float = 0.5
+			self.linewidth_medium: float = 1
+			self.linewidth_thick: float = 1.5
+			self.spine_linewidth: float = self.linewidth_thin
+			self.prediction_plot_options: dict = {'lw':self.linewidth_thick, 'label':'Prediction', 'color':'C1'}
+			self.reference_plot_options: dict = {'lw':self.linewidth_thin, 'label':'Reference', 'color':'C0'}
 			self.grid_options: list = [
 				{'which': 'major', 'color': '#e0e0e0', 'linewidth': 0.6},
 				{'which': 'minor', 'color': '#f0f0f0', 'linewidth': 0.3, 'ls': '--'}
 			]
 		else:			# 'one-column'
-			self.crossvalidation_figsize: callable = lambda n: (6, 2.5 * n)
-			self.label_fontsize: int = 12
-			self.title_fontsize: int = 16
-			self.annotate_fontsize: int = 10
-			self.legend_fontsize: int = 10
-			self.tick_label_fontsize: int = 10
+			self.multiple_figsize: callable = lambda n: (6, 2.5 * n)
+			self.label_fontsize: float = 12
+			self.title_fontsize: float = 16
+			self.annotate_fontsize: float = 10
+			self.legend_fontsize: float = 10
+			self.tick_label_fontsize: float = 10
 
-			self.spine_linewidth: int = 1
-			self.prediction_plot_options: dict = {'lw':1.5, 'label':'Prediction', 'color':'C1'}
-			self.reference_plot_options: dict = {'lw':0.75, 'label':'Reference', 'color':'C0'}
+			self.linewidth_thin: float = 0.5
+			self.linewidth_medium: float = 1
+			self.linewidth_thick: float = 1.5
+			self.spine_linewidth: float = self.linewidth_thin
+			self.prediction_plot_options: dict = {'lw':self.linewidth_thick, 'label':'Prediction', 'color':'C1'}
+			self.reference_plot_options: dict = {'lw':self.linewidth_thin, 'label':'Reference', 'color':'C0'}
 			self.grid_options: list = [
 				{'which': 'major', 'color': '#e0e0e0', 'linewidth': 0.6},
 				{'which': 'minor', 'color': '#f0f0f0', 'linewidth': 0.3, 'ls': '--'}
@@ -113,12 +133,17 @@ class PlotStyle:
 		self.reference_plot_options['label'] = {'en': 'Reference', 'pt': 'Referência'}[lang]
 		self.M2_training_score_history_title = {'en': 'Score History', 'pt': 'Histórico do score'}[lang]
 		self.M2_training_score_history_xlabel = {'en': 'Iteration', 'pt': 'Iteração'}[lang]
-		self.predictions_xlabel = {'en': 'Time', 'pt': 'Tempo'}[lang] + self.time_unit_annotation
-		self.predictions_ylabel = {'en': 'Temperature', 'pt': 'Temperatura'}[lang] + self.temperature_unit_annotation 
+		self.xlabel_time = {'en': 'Time', 'pt': 'Tempo'}[lang] + self.time_unit_annotation
+		self.ylabel_temperature = {'en': 'Temperature', 'pt': 'Temperatura'}[lang] + self.temperature_unit_annotation 
+		self.ylabel_temperature_diff = {'en': 'Temperature difference', 'pt': 'Diferença de temperatura'}[lang] + self.temperature_unit_annotation
+		self.ylabel_cpu_load = {'en': 'CPU load', 'pt': 'Utilização da CPU'}[lang] + self.percent_unit_annotation
 		self.M2_partial_prediction_title = {'en': 'M2 prediction', 'pt': 'Predição M2'}[lang]
 		self.M3_partial_prediction_title = {'en': 'M3 prediction', 'pt': 'Predição M3'}[lang]
-		self.M3_partial_prediction_ylabel = {'en': 'Temperature difference', 'pt': 'Diferença de temperatura'}[lang] + self.temperature_unit_annotation
 		self.M3_crossvalidation_title = {'en': 'M3 Cross-validation', 'pt': 'Validação cruzada M3'}[lang]
+		self.full_dataset_title = {'en': 'Full length dataset','pt':'Dataset em toda duração'}[lang]
+		self.clipped_dataset_title = {'en': 'Clipped length dataset','pt':'Dataset até o primeiro superaquecimento'}[lang]
+		self.first_temp_peak_detail_title = {'en': 'Detailed view for detected high CPU segment','pt':'Detalhe do segmento de alta utilização de CPU'}[lang]
+		self.CPU_load_feature_in_legend = {'en':'CPU load feature','pt':'Atributo da utilização da CPU'}[lang]
 def get_plotstlye(publication):
 
 	# Set publications specific parameter tweaks 
@@ -445,12 +470,12 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 					ps.facecolor = None
 				if not (isinstance(ps.grid_options, list)): 
 					ps.grid_options = []
-				if not isinstance(ps.figsize,tuple) or len(ps.figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.figsize]):
-					ps.figsize = None
+				if not isinstance(ps.single_figsize,tuple) or len(ps.single_figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.single_figsize]):
+					ps.single_figsize = None
 				return ps
 			PS = sanitize_plotstyle(self.plotstyle)
 			data = self.data_source()
-			fig, ax = plt.subplots(1, figsize = PS.figsize)
+			fig, ax = plt.subplots(1, figsize = PS.single_figsize)
 			x = range(len(data))
 			ax.plot(x, data)
 			ax.set_xlabel(PS.M2_training_score_history_xlabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
@@ -497,10 +522,10 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 					ps.legend_fontsize = None
 				if not (isinstance(ps.tick_label_fontsize, (int,float)) and ps.tick_label_fontsize > 0): 
 					ps.tick_label_fontsize = None
-				if not (isinstance(ps.predictions_xlabel, str)):
-					ps.predictions_xlabel = ''
-				if not (isinstance(ps.predictions_ylabel, str)):
-					ps.predictions_ylabel = ''
+				if not (isinstance(ps.xlabel_time, str)):
+					ps.xlabel_time = ''
+				if not (isinstance(ps.ylabel_temperature, str)):
+					ps.ylabel_temperature = ''
 				if not (isinstance(ps.M2_partial_prediction_title, str)):
 					ps.M2_partial_prediction_title = ''
 				if not (isinstance(ps.M2_partial_prediction_filename, str)): 
@@ -511,22 +536,22 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 					ps.savefig_bbox_inches = 'tight'
 				if not (is_valid_font(ps.label_fontfamily)): 
 					ps.label_fontfamily = None
-				if not isinstance(ps.figsize,tuple) or len(ps.figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.figsize]):
-					ps.figsize = None
+				if not isinstance(ps.single_figsize,tuple) or len(ps.single_figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.single_figsize]):
+					ps.single_figsize = None
 				if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
 					ps.spine_linewidth = None
 				return ps
 			PS = sanitize_plotstyle(self.plotstyle)
 
-			fig, ax = plt.subplots(1, figsize=PS.figsize)
+			fig, ax = plt.subplots(1, figsize=PS.single_figsize)
 			if isinstance(y_true, pd.Series): x = y_true.index
 			else: x = range(len(y_true))
 			ax.plot(x, y_true, **PS.reference_plot_options)		# Reference line
 			ax.plot(x, y_pred, **PS.prediction_plot_options)	# Prediction line
 			ax.set_facecolor(PS.facecolor)
 			for grid_option in PS.grid_options: ax.grid(**grid_option)
-			ax.set_xlabel(PS.predictions_xlabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
-			ax.set_ylabel(PS.predictions_ylabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+			ax.set_xlabel(PS.xlabel_time, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+			ax.set_ylabel(PS.ylabel_temperature, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
 			ax.legend(fontsize=PS.legend_fontsize)
 			ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)
 			if PS.spine_linewidth is not None:
@@ -824,8 +849,8 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 						)
 					except Exception:
 						return False
-				if not _is_valid_figsize_callable(ps.crossvalidation_figsize):
-					ps.crossvalidation_figsize = None
+				if not _is_valid_figsize_callable(ps.multiple_figsize):
+					ps.multiple_figsize = None
 				if not isinstance(ps.reference_plot_options, dict):
 					ps.reference_plot_options = {}
 				if not isinstance(ps.prediction_plot_options, dict):
@@ -850,14 +875,14 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 					ps.savefig_bbox_inches = 'tight'
 				if not (is_valid_font(ps.label_fontfamily)): 
 					ps.label_fontfamily = None
-				if not isinstance(ps.figsize,tuple) or len(ps.figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.figsize]):
-					ps.figsize = None
+				if not isinstance(ps.single_figsize,tuple) or len(ps.single_figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.single_figsize]):
+					ps.single_figsize = None
 				if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
 					ps.spine_linewidth = None
 				return ps
 			PS = sanitize_plotstyle(self.plotstyle)
 			n_folds = len(fold_indices)
-			fig, ax = plt.subplots(n_folds, figsize=PS.crossvalidation_figsize(n_folds) )
+			fig, ax = plt.subplots(n_folds, figsize=PS.multiple_figsize(n_folds) )
 			if n_folds == 1: ax = [ax]
 			for ff in fold_indices:
 				ax[ff].plot(y_tests[ff], **PS.reference_plot_options)	# Reference line
@@ -873,8 +898,8 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 				if PS.spine_linewidth is not None:
 					for spine in ax[ff].spines.values(): spine.set_linewidth(PS.spine_linewidth)
 			# prints a shared y axis label
-			fig.text(0.05, 0.5, PS.M3_partial_prediction_ylabel, va='center', rotation='vertical', fontsize = PS.label_fontsize, fontname=PS.label_fontfamily)
-			ax[-1].set_xlabel(PS.predictions_xlabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+			fig.text(0.05, 0.5, PS.ylabel_temperature_diff, va='center', rotation='vertical', fontsize = PS.label_fontsize, fontname=PS.label_fontfamily)
+			ax[-1].set_xlabel(PS.xlabel_time, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
 			PlotStyle.settitle_and_savefig(fig, ax,
 				savefig_options=PlotStyle.compose_savefig_options(
 					fname=PS.M3_crossvalidation_filename, 
@@ -911,13 +936,13 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 					ps.legend_fontsize = None
 				if not (isinstance(ps.tick_label_fontsize, (int,float)) and ps.tick_label_fontsize > 0): 
 					ps.tick_label_fontsize = None
-				if not (isinstance(ps.predictions_xlabel, str)):
-					ps.predictions_xlabel = ''
-				if not (isinstance(ps.predictions_ylabel, str)):
-					ps.predictions_ylabel = ''
+				if not (isinstance(ps.xlabel_time, str)):
+					ps.xlabel_time = ''
+				if not (isinstance(ps.ylabel_temperature, str)):
+					ps.ylabel_temperature = ''
 				if not (isinstance(ps.M3_partial_prediction_title, str)):
 					ps.M3_partial_prediction_title = ''
-				if not (isinstance(ps.M3_partial_prediction_ylabel, str)):
+				if not (isinstance(ps.ylabel_temperature_diff, str)):
 					ps.M3_partial_prediction_title = ''
 				if not (isinstance(ps.M3_partial_prediction_filename, str)): 
 					ps.M3_partial_prediction_filename = 'M3_partial_prediction'
@@ -927,22 +952,22 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 					ps.savefig_bbox_inches = 'tight'
 				if not (is_valid_font(ps.label_fontfamily)): 
 					ps.label_fontfamily = None
-				if not isinstance(ps.figsize,tuple) or len(ps.figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.figsize]):
-					ps.figsize = None
+				if not isinstance(ps.single_figsize,tuple) or len(ps.single_figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.single_figsize]):
+					ps.single_figsize = None
 				if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
 					ps.spine_linewidth = None
 				return ps
 			PS = sanitize_plotstyle(self.plotstyle)
 
-			fig, ax = plt.subplots(1, figsize=PS.figsize)
+			fig, ax = plt.subplots(1, figsize=PS.single_figsize)
 			if isinstance(y_true, pd.Series): x = y_true.index
 			else: x = range(len(y_true))
 			ax.plot(x, y_true, **PS.reference_plot_options)		# Reference line
 			ax.plot(x, y_pred, **PS.prediction_plot_options)	# Prediction line
 			ax.set_facecolor(PS.facecolor)
 			for grid_option in PS.grid_options: ax.grid(**grid_option)
-			ax.set_xlabel(PS.predictions_xlabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
-			ylabel = PS.M3_partial_prediction_ylabel or PS.predictions_ylabel
+			ax.set_xlabel(PS.xlabel_time, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+			ylabel = PS.ylabel_temperature_diff or PS.ylabel_temperature
 			ax.set_ylabel(ylabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
 			ax.legend(fontsize=PS.legend_fontsize)
 			ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)

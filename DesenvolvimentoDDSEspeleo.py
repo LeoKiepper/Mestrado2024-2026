@@ -1,9 +1,14 @@
 from bagpy import bagreader
 import pandas as pd
+import numpy as np
 import re
 import matplotlib.pyplot as plt
 from datetime import timedelta
-
+import ruptures as rpt
+from math import floor
+from ddslib import *
+import matplotlib.colors as mcolors
+from matplotlib.ticker import FuncFormatter
 #%% Resolve telemetry variable
 import tellib
 def resolvetel():
@@ -195,15 +200,178 @@ def calcfeatures(tel: pd.DataFrame) -> pd.DataFrame:
 	regex = re.compile(r'^CPU_\d+$')
 	cols = [col for col in tel.columns if regex.match(col)]
 	if ('CPU' in features) and cols: # cols evaluates to false if it is empty
-		df.loc[:,'CPU'] = tel.loc[:,cols].max(axis=1)
-	
+		df.loc[:,'CPU'] = tel.loc[:,cols].max(axis=1)/100
+		df = df.join(tel[cols]/100)
+
 	return df.dropna()
 df=calcfeatures(tel)
-df=df[df.index<2790]			# cull dataset before temperature peak
-df['CPU'] = df['CPU']/100		# in place of systematic normalization, just scale CPU usage to 0-1 range
+
+#%% Define plotter for the dataset
+class DatasetPlotter:
+	def __init__(self, plotstyle: PlotStyle):
+		self.plotstyle = plotstyle
+	def plot(self,df,segments=[],savefig_options: dict = {},set_title_options: dict = {}, savefig: bool = True, save_with_title: bool = True, plot_only_cpu_feature: bool = False, plot_only_raw_cpu: bool = False, show_segment: dict = {}, margin = 1):
+		def sanitize_plotstyle(ps: PlotStyle):
+			if ps is None: ps = get_plotstlye('')
+			if not (isinstance(ps.M2_training_score_history_title, str)): 
+				ps.M2_training_score_history_title = ''
+			if not (isinstance(ps.M2_training_score_history_xlabel, str)): 
+				ps.M2_training_score_history_xlabel = ''
+			if not (isinstance(ps.M2_training_score_history_ylabel, str)): 
+				ps.M2_training_score_history_ylabel = ''
+			if not (isinstance(ps.M2_training_score_history_filename, str)): 
+				ps.M2_training_score_history_filename = 'M2_training_score_history'
+			if not (isinstance(ps.save_figure_extension, str)): 
+				ps.save_figure_extension = 'svg'
+			if not (isinstance(ps.savefig_bbox_inches, str)): 
+				ps.savefig_bbox_inches = 'tight'
+			if not (is_valid_font(ps.label_fontfamily)): 
+				ps.label_fontfamily = None
+			if not (isinstance(ps.label_fontsize, (int,float)) and ps.label_fontsize > 0): 
+				ps.label_fontsize = None
+			if not (isinstance(ps.title_fontsize, (int,float)) and ps.title_fontsize > 0): 
+				ps.title_fontsize = None
+			if not (isinstance(ps.tick_label_fontsize, (int,float)) and ps.tick_label_fontsize > 0): 
+				ps.tick_label_fontsize = None
+			if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
+				ps.spine_linewidth = None
+			if not mcolors.is_color_like(ps.facecolor):
+				ps.facecolor = None
+			if not (isinstance(ps.grid_options, list)): 
+				ps.grid_options = []
+			if not isinstance(ps.single_figsize,tuple) or len(ps.single_figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.single_figsize]):
+				ps.single_figsize = None
+			return ps
+		PS = sanitize_plotstyle(self.plotstyle)
+		fig, ax = plt.subplots(nrows=(N:=2), figsize=PS.multiple_figsize(N))
+		# ============ Temperature
+		aa=0
+		ax[aa].plot('T_CPU', data=df, linewidth=PS.linewidth_thin)
+		ax[aa].set_ylabel(PS.ylabel_temperature, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+		ax[aa].set_facecolor(PS.facecolor)
+		for grid_option in PS.grid_options: ax[aa].grid(**grid_option)
+		for spine in ax[aa].spines.values(): spine.set_linewidth(PS.spine_linewidth)
+		
+		# ============ CPU percent
+		aa=1
+		if not plot_only_raw_cpu:
+			ax[aa].plot('CPU', data=df, label = 'CPU feature', linewidth=PS.linewidth_thin if plot_only_cpu_feature else PS.linewidth_thick)
+		if not plot_only_cpu_feature:
+			num_cpus = len([col for col in df.columns if re.match(r'^CPU_\d+$', col)])
+			for cpu in range(num_cpus):
+				ax[aa].plot(f'CPU_{cpu}', data=df, label = fr'$CPU_{{{cpu+1}}}$', linewidth=PS.linewidth_thin)
+			ax[aa].legend(fontsize=PS.legend_fontsize, ncol=3)
+		ax[aa].set_ylabel(PS.ylabel_cpu_load, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+		ax[aa].yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{int(y*100)}"))
+		ax[aa].set_facecolor(PS.facecolor)
+		for grid_option in PS.grid_options: ax[aa].grid(**grid_option)
+		for spine in ax[aa].spines.values(): spine.set_linewidth(PS.spine_linewidth)
+
+		# Set xlabel for the last plot
+		ax[-1].set_xlabel(PS.xlabel_time, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+
+		for seg in segments:
+			if seg['state']=='high':
+				start = df.index[seg['pos_low']]
+				end = df.index[seg['pos_up']]
+				for axis in ax: axis.axvspan(start,end,color = "#ff7676ff", alpha=0.4)
+
+		if show_segment:
+			start = max(df.index[show_segment['pos_low']]-margin,df.index[0])
+			end = min(df.index[show_segment['pos_up']]+margin,df.index[-1])
+			for axis in ax: axis.set_xlim(start,end)
+			
+
+		PlotStyle.settitle_and_savefig(fig, ax,
+			savefig_options=savefig_options,
+			set_title_options=set_title_options,
+			savefig=savefig,
+			save_with_title=save_with_title
+		)
+		plt.show(block=True)
+PS=get_plotstlye('IEEE2025')
+dsplotter=DatasetPlotter(PS)
+#%% Segment time series
+def HighCPUDetect(df, margin=0,threshold=0.8):
+	"""
+	Implements high cpu detection logic.
+	
+	:param cpu_percent: array containing CPU usage
+	:param cp: array for change points detected in cpu_percent, listed as indexes for each position.
+	Each position of cp is considered the last index of a segment (should not contain 0).
+	:param margin: number of indexes to consider on each side of each segment investigated in the detection criterion implemented.
+	:param threshold: consider high CPU usage if the average of the segment is greater than this value.
+
+	:return segment: list of detected segments, formatted as dictionaries with the following keys:
+	
+	"""
+	cpu_percent=df['CPU'].values
+	model = "l2"  # "l1", "rbf", "linear", "normal", "ar"
+	algo = rpt.Window(model=model).fit(cpu_percent)
+	ChangePoints = algo.predict(pen=5)
+	Segments=[]
+	for cc, pos_up in enumerate(ChangePoints):
+		pos_up=min(pos_up+margin,len(cpu_percent))
+		pos_low=max(ChangePoints[cc-1]+1-margin,0) if cc>0 else 0
+		
+		
+		avg=float(np.average(cpu_percent[pos_low:pos_up]))
+		if avg>threshold: 	Segments.append({'state':'high','pos_low':pos_low,'pos_up':pos_up,'avg':avg})
+		else:				Segments.append({'state':'norm','pos_low':pos_low,'pos_up':pos_up,'avg':avg})
+	return ChangePoints, Segments
+bkpts, segments = HighCPUDetect(df, margin = 5,threshold=0.8)
+if plotdataset:=True: dsplotter.plot(df,segments, plot_only_raw_cpu=True,
+				savefig_options=PlotStyle.compose_savefig_options(
+					fname=PS.full_dataset_filename, 
+					format=PS.save_figure_extension, 
+					bbox_inches=PS.savefig_bbox_inches
+				),
+				set_title_options=PlotStyle.compose_set_title_options(
+					label=PS.full_dataset_title, 
+					fontsize=PS.title_fontsize,
+					fontname=PS.label_fontfamily
+				),
+				savefig=PS.full_dataset_savefig,
+				save_with_title=PS.save_with_title
+)
+if plotdataset: dsplotter.plot(df,segments=segments,show_segment=segments[1],margin=1,
+				savefig_options=PlotStyle.compose_savefig_options(
+					fname=PS.first_temp_peak_detail_filename, 
+					format=PS.save_figure_extension, 
+					bbox_inches=PS.savefig_bbox_inches
+				),
+				set_title_options=PlotStyle.compose_set_title_options(
+					label=PS.first_temp_peak_detail_title, 
+					fontsize=PS.title_fontsize,
+					fontname=PS.label_fontfamily
+				),
+				savefig=PS.first_temp_peak_detail_savefig,
+				save_with_title=PS.save_with_title
+)
+
+idx = segments[1]['pos_low']
+df=df[range(len(df))<idx]			# clip dataset before temperature peak
+if plotdataset: dsplotter.plot(df,plot_only_cpu_feature=True,
+				savefig_options=PlotStyle.compose_savefig_options(
+					fname=PS.clipped_dataset_filename, 
+					format=PS.save_figure_extension, 
+					bbox_inches=PS.savefig_bbox_inches
+				),
+				set_title_options=PlotStyle.compose_set_title_options(
+					label=PS.clipped_dataset_title, 
+					fontsize=PS.title_fontsize,
+					fontname=PS.label_fontfamily
+				),
+				savefig=PS.clipped_dataset_savefig,
+				save_with_title=PS.save_with_title
+)
+
+#%% Define ambient temperature to be the temperature readout from the first few samples
 def calc_temp_amp(df):
 	return df.loc[df.index<=10,'T_CPU'].mean()
 df2=df[['T_CPU','CPU']].copy(deep=True)
+
+
 
 #%%  Define and instantiate DDS model components
 from ddslib import M2, M2Kernel, M2Optimizer, M3, get_plotstlye
