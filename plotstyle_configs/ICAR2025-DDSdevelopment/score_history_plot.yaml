@@ -1,0 +1,21 @@
+base:
+  type: file
+  value: base_ICAR2025-DDSdevelopment.yaml
+save:
+  type: bool
+  value: False
+
+title:
+  type: title
+  value:
+    en: 'Score History'
+    pt: 'Histórico do score'
+xlabel:
+  type: label
+  value:
+    en: 'Iteration'
+    pt: 'Iteração'
+# ylabel is inferred in code, because doing so in YAML is impractical
+filename:
+  type: filename
+  value: 'M2_training_score_history'

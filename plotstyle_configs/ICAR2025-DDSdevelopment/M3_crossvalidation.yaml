@@ -1,0 +1,25 @@
+base:
+  type: file
+  value: base_ICAR2025-DDSdevelopment.yaml
+save:
+  type: bool
+  value: False
+
+figsize:
+  type: figsize
+  value: "layout/figsize_multiple"
+title:
+  type: title
+  value:
+    en: 'M3 cross-validation'
+    pt: 'Validação cruzada M3'
+xlabel:
+  type: label
+  value: "base/xlabel_timeseries"
+ylabel:
+  type: label
+  value: "base/ylabel_temperaturediff"
+  shared: True
+filename:
+  type: filename
+  value: 'M3_crossvalidation'

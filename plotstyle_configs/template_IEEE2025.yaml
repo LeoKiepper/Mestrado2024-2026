@@ -1,0 +1,16 @@
+layout:
+  type: file
+  value: layout_two-column.yaml 
+
+# FONT SPEC
+fontfamily:
+  type: fontfamily
+  value: 'Times New Roman'
+fontsize:
+  type: fontsize
+  value: 12
+
+# FILE SPEC
+file_format:
+  type: fileformat
+  value: 'pdf'

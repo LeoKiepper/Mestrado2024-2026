@@ -206,19 +206,19 @@ def calcfeatures(tel: pd.DataFrame) -> pd.DataFrame:
 	return df.dropna()
 df=calcfeatures(tel)
 
-#%% Define plotter for the dataset
+#%% Define the plotter for the dataset
 class DatasetPlotter:
 	def __init__(self, plotstyle: PlotStyle):
 		self.plotstyle = plotstyle
 	def plot(self,df,segments=[],savefig_options: dict = {},set_title_options: dict = {}, savefig: bool = True, save_with_title: bool = True, plot_only_cpu_feature: bool = False, plot_only_raw_cpu: bool = False, show_segment: dict = {}, margin = 1):
 		def sanitize_plotstyle(ps: PlotStyle):
-			if ps is None: ps = get_plotstlye('')
+			if ps is None: ps = get_plotstyle('')
 			if not (isinstance(ps.M2_training_score_history_title, str)): 
 				ps.M2_training_score_history_title = ''
 			if not (isinstance(ps.M2_training_score_history_xlabel, str)): 
 				ps.M2_training_score_history_xlabel = ''
-			if not (isinstance(ps.M2_training_score_history_ylabel, str)): 
-				ps.M2_training_score_history_ylabel = ''
+			if not (isinstance(ps.score_label, str)): 
+				ps.score_label = ''
 			if not (isinstance(ps.M2_training_score_history_filename, str)): 
 				ps.M2_training_score_history_filename = 'M2_training_score_history'
 			if not (isinstance(ps.save_figure_extension, str)): 
@@ -255,12 +255,12 @@ class DatasetPlotter:
 		# ============ CPU percent
 		aa=1
 		if not plot_only_raw_cpu:
-			ax[aa].plot('CPU', data=df, label = 'CPU feature', linewidth=PS.linewidth_thin if plot_only_cpu_feature else PS.linewidth_thick)
+			ax[aa].plot('CPU', data=df, label = 'CPU feature', linewidth=PS.linewidth_thin if plot_only_cpu_feature else PS.linewidth_thick+0.5, color='C8')
 		if not plot_only_cpu_feature:
 			num_cpus = len([col for col in df.columns if re.match(r'^CPU_\d+$', col)])
 			for cpu in range(num_cpus):
 				ax[aa].plot(f'CPU_{cpu}', data=df, label = fr'$CPU_{{{cpu+1}}}$', linewidth=PS.linewidth_thin)
-			ax[aa].legend(fontsize=PS.legend_fontsize, ncol=3)
+			if plot_only_raw_cpu: ax[aa].legend(fontsize=PS.legend_fontsize, ncol=3)
 		ax[aa].set_ylabel(PS.ylabel_cpu_load, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
 		ax[aa].yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{int(y*100)}"))
 		ax[aa].set_facecolor(PS.facecolor)
@@ -289,7 +289,7 @@ class DatasetPlotter:
 			save_with_title=save_with_title
 		)
 		plt.show(block=True)
-PS=get_plotstlye('IEEE2025')
+PS=get_plotstyle('IEEE2025')
 dsplotter=DatasetPlotter(PS)
 #%% Segment time series
 def HighCPUDetect(df, margin=0,threshold=0.8):
@@ -320,6 +320,7 @@ def HighCPUDetect(df, margin=0,threshold=0.8):
 		else:				Segments.append({'state':'norm','pos_low':pos_low,'pos_up':pos_up,'avg':avg})
 	return ChangePoints, Segments
 bkpts, segments = HighCPUDetect(df, margin = 5,threshold=0.8)
+#%% Dataset plots
 if plotdataset:=True: dsplotter.plot(df,segments, plot_only_raw_cpu=True,
 				savefig_options=PlotStyle.compose_savefig_options(
 					fname=PS.full_dataset_filename, 
@@ -351,7 +352,7 @@ if plotdataset: dsplotter.plot(df,segments=segments,show_segment=segments[1],mar
 
 idx = segments[1]['pos_low']
 df=df[range(len(df))<idx]			# clip dataset before temperature peak
-if plotdataset: dsplotter.plot(df,plot_only_cpu_feature=True,
+if plot_clipped_dataset := False : dsplotter.plot(df,plot_only_cpu_feature=True,
 				savefig_options=PlotStyle.compose_savefig_options(
 					fname=PS.clipped_dataset_filename, 
 					format=PS.save_figure_extension, 
@@ -374,7 +375,7 @@ df2=df[['T_CPU','CPU']].copy(deep=True)
 
 
 #%%  Define and instantiate DDS model components
-from ddslib import M2, M2Kernel, M2Optimizer, M3, get_plotstlye
+from ddslib import M2, M2Kernel, M2Optimizer, M3, get_plotstyle
 m2obj=M2(
 	M2Kernel(lambda cpu: cpu**2, lambda temp_current, temp_ext: temp_current-temp_ext, TempAmb=calc_temp_amp(df2), Dt=(df2.index[-1]-df2.index[0])/len(df2),
 		param_space=M2Kernel.ParamSpace(KCPU=(1e-5,10), KTemp=(1e-5,1), TauCPU=(1e-9,2), TauTemp=(1e-9,2)),
@@ -387,23 +388,98 @@ m2obj=M2(
 		training_stop_flags = M2Optimizer.StopConditions.GLOBAL_MIN_LOSS 
 							| M2Optimizer.StopConditions.GLOBAL_MAX_DURATION
 				),
-	plotstyle=get_plotstlye('IEEE2025')
+	plotstyle=PS
 )
 m2target_col = 'T_CPU'
 m2obj.fit(df2['CPU'].to_frame(), df2[m2target_col], plot=(plot:=True))
-m2pred=m2obj.predict(df2['CPU'].to_frame(), 		plot= plot, against = df2[m2target_col])
+m2pred = m2obj.predict(df2['CPU'].to_frame(), 		plot= plot, against = df2[m2target_col])
 
 m3_source_col = m2target_col
 df3=df.loc[:,df.columns != m3_source_col].copy(deep=True)
 target_col = 'Temp_residue'
 df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
 
-m3obj=M3(n_estimators=1000, plotstyle=get_plotstlye('IEEE2025'))
-m3obj.fit(plot = 	(plot := True),
+m3obj=M3(n_estimators=1000, plotstyle=PS)
+m3obj.fit(plot = False,
 	X = df3.loc[:,df3.columns != target_col],	
 	y = df3.loc[:,target_col],
 	)
-m3obj.predict(plot = plot,			against=df3[target_col],
+m3pred = m3obj.predict(plot = True,			against=df3[target_col],
 	X = df3.loc[:,df3.columns != target_col]
 	)
 
+
+#%% Define the plotter for the composite prediction
+class CompositePredictionPlotter:
+	def __init__(self, plotstyle: PlotStyle):
+		self.plotstyle = plotstyle
+	def plot(self, reference, pred):
+		def sanitize_plotstyle(ps: PlotStyle):
+			if ps is None: ps = get_plotstyle('')
+			if not (isinstance(ps.M2_training_score_history_title, str)): 
+				ps.M2_training_score_history_title = ''
+			if not (isinstance(ps.M2_training_score_history_xlabel, str)): 
+				ps.M2_training_score_history_xlabel = ''
+			if not (isinstance(ps.score_label, str)): 
+				ps.score_label = ''
+			if not (isinstance(ps.M2_training_score_history_filename, str)): 
+				ps.M2_training_score_history_filename = 'M2_training_score_history'
+			if not (isinstance(ps.save_figure_extension, str)): 
+				ps.save_figure_extension = 'svg'
+			if not (isinstance(ps.savefig_bbox_inches, str)): 
+				ps.savefig_bbox_inches = 'tight'
+			if not (is_valid_font(ps.label_fontfamily)): 
+				ps.label_fontfamily = None
+			if not (isinstance(ps.label_fontsize, (int,float)) and ps.label_fontsize > 0): 
+				ps.label_fontsize = None
+			if not (isinstance(ps.title_fontsize, (int,float)) and ps.title_fontsize > 0): 
+				ps.title_fontsize = None
+			if not (isinstance(ps.tick_label_fontsize, (int,float)) and ps.tick_label_fontsize > 0): 
+				ps.tick_label_fontsize = None
+			if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
+				ps.spine_linewidth = None
+			if not mcolors.is_color_like(ps.facecolor):
+				ps.facecolor = None
+			if not (isinstance(ps.grid_options, list)): 
+				ps.grid_options = []
+			if not isinstance(ps.single_figsize,tuple) or len(ps.single_figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.single_figsize]):
+				ps.single_figsize = None
+			return ps
+		PS = sanitize_plotstyle(self.plotstyle)
+
+		fig, ax = plt.subplots(1, figsize=PS.single_figsize)
+		if isinstance(reference, pd.Series): 
+			x = reference.index
+			ref = reference.values
+		else: 
+			x = range(len(reference))
+			ref = reference
+		ax.plot(x, ref, **PS.reference_plot_options)	# Reference line
+		ax.plot(x, pred, **PS.prediction_plot_options)	# Prediction line
+		ax.set_facecolor(PS.facecolor)
+		for grid_option in PS.grid_options: ax.grid(**grid_option)
+		ax.set_xlabel(PS.xlabel_time, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+		ax.set_ylabel(PS.ylabel_temperature, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+		ax.legend(fontsize=PS.legend_fontsize)
+		ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)
+		if PS.spine_linewidth is not None:
+			for spine in ax.spines.values(): spine.set_linewidth(PS.spine_linewidth)
+		ax.annotate(PS.score_label+f' = {SCORE_FUNCTION(ref,pred):0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
+			fontsize=PS.annotate_fontsize, horizontalalignment='right', verticalalignment='bottom')
+		PlotStyle.settitle_and_savefig(fig, ax,
+			savefig_options=PlotStyle.compose_savefig_options(
+				fname=PS.composite_prediction_filename, 
+				format=PS.save_figure_extension, 
+				bbox_inches=PS.savefig_bbox_inches
+			),
+			set_title_options=PlotStyle.compose_set_title_options(
+				label=PS.composite_prediction_title, 
+				fontsize=PS.title_fontsize,
+				fontname=PS.label_fontfamily
+			),
+			savefig=PS.composite_prediction_savefig,
+			save_with_title=PS.save_with_title
+		)
+		plt.show(block=True)
+predplotter=CompositePredictionPlotter(PS)
+if plotpred:=True: predplotter.plot(df2[m2target_col], m2pred+m3pred)

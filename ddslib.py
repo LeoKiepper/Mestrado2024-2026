@@ -20,7 +20,7 @@ from matplotlib.container import StemContainer
 import matplotlib.colors as mcolors
 import matplotlib; matplotlib.use('QtAgg')
 _STARTING_SCORE = float('-inf')
-
+SCORE_FUNCTION = root_mean_squared_error
 
 @dataclass
 class PlotStyle:
@@ -45,13 +45,13 @@ class PlotStyle:
 			if savefig: fig.savefig(**savefig_options)
 			if not save_with_title: set_title()
 	layout: str = 'two-column'
-	facecolor: str = '#fafafa'
+	facecolor: str = '#fbfbfb'
 	label_fontfamily = 'Times New Roman'
 	time_unit_annotation: str = r' $[s]$'
 	temperature_unit_annotation: str = r' $[°C]$'
 	percent_unit_annotation: str = r' $[\%]$'
 	savefig_bbox_inches: str = 'tight'
-	save_figure_extension: str = 'pdf'		# This is a fallback extension, for when the filename does not provide one.
+	save_figure_extension: str = 'pdf' # This is used as the default extension, for when the filename does not provide one.
 	save_with_title = False	# if True, the figure title is drawn before the figure is saved and will show on the saved file.
 
 	# =================== Figure specific parameters ===================
@@ -59,21 +59,21 @@ class PlotStyle:
 	# strings are to be set by the get_plotstlye function.
 	M2_training_score_history_title: str = ''
 	M2_training_score_history_xlabel: str = ''
-	M2_training_score_history_ylabel: str = ''
+	score_label: str = ''
 	M2_training_score_history_filename: str = 'M2_training_score_history'
 	M2_training_score_history_savefig: bool = False
 
 	M2_partial_prediction_title: str = ''
-	M2_partial_prediction_filename: str = 'M2_partial_predictions'
+	M2_partial_prediction_filename: str = 'M2_partial_prediction'
 	M2_partial_prediction_savefig: bool = True
 
 	M3_crossvalidation_title: str = ''
 	M3_crossvalidation_filename: str = 'M3_crossvalidation'
 	M3_crossvalidation_savefig: bool = False
 
-	M3_partial_prediction_title: str = ''
 	ylabel_temperature_diff: str = ''
-	M3_partial_prediction_filename: str = 'M3_partial_predictions'
+	M3_partial_prediction_title: str = ''
+	M3_partial_prediction_filename: str = 'M3_partial_prediction'
 	M3_partial_prediction_savefig: bool = True
 
 	full_dataset_title: str = ''
@@ -88,7 +88,11 @@ class PlotStyle:
 	first_temp_peak_detail_title: str = ''
 	first_temp_peak_detail_filename: str = 'First_temp_peak_detail'
 	first_temp_peak_detail_savefig: bool = True
-	
+
+	composite_prediction_title: str = ''
+	composite_prediction_filename: str = 'composite_prediction'
+	composite_prediction_savefig: bool = True
+
 	def __post_init__(self):		# Layout specific parameters
 		if self.layout == 'two-column':
 			self.single_figsize = (3.6,2.7)	# matplotlib default is (6.4,4.8) inches
@@ -134,7 +138,7 @@ class PlotStyle:
 		self.M2_training_score_history_title = {'en': 'Score History', 'pt': 'Histórico do score'}[lang]
 		self.M2_training_score_history_xlabel = {'en': 'Iteration', 'pt': 'Iteração'}[lang]
 		self.xlabel_time = {'en': 'Time', 'pt': 'Tempo'}[lang] + self.time_unit_annotation
-		self.ylabel_temperature = {'en': 'Temperature', 'pt': 'Temperatura'}[lang] + self.temperature_unit_annotation 
+		self.ylabel_temperature = {'en': 'CPU Temperature', 'pt': 'Temperatura da CPU'}[lang] + self.temperature_unit_annotation 
 		self.ylabel_temperature_diff = {'en': 'Temperature difference', 'pt': 'Diferença de temperatura'}[lang] + self.temperature_unit_annotation
 		self.ylabel_cpu_load = {'en': 'CPU load', 'pt': 'Utilização da CPU'}[lang] + self.percent_unit_annotation
 		self.M2_partial_prediction_title = {'en': 'M2 prediction', 'pt': 'Predição M2'}[lang]
@@ -144,7 +148,8 @@ class PlotStyle:
 		self.clipped_dataset_title = {'en': 'Clipped length dataset','pt':'Dataset até o primeiro superaquecimento'}[lang]
 		self.first_temp_peak_detail_title = {'en': 'Detailed view for detected high CPU segment','pt':'Detalhe do segmento de alta utilização de CPU'}[lang]
 		self.CPU_load_feature_in_legend = {'en':'CPU load feature','pt':'Atributo da utilização da CPU'}[lang]
-def get_plotstlye(publication):
+		self.composite_prediction_title = {'en': 'Composite prediction', 'pt': 'Predição composta'}[lang]
+def get_plotstyle(publication):
 
 	# Set publications specific parameter tweaks 
 	match publication:
@@ -155,20 +160,29 @@ def get_plotstlye(publication):
 			ps = PlotStyle(layout='two-column')
 			ps.localize(lang='en')
 
-	ps.M2_training_score_history_ylabel = infer_score_ylabel(M2Optimizer.score)
+	ps.score_label = infer_score_label(SCORE_FUNCTION)
 
 	return ps
-def infer_score_ylabel(score_fn):
+def infer_score_label(score_fn):
 	SCORING_LABELS = {
 		'root_mean_squared_error': 'RMSE',
 		'mean_absolute_error': 'MAE',
 		'mean_squared_error': 'MSE',
 		'mean_absolute_percentage_error': 'MAPE',
 	}
+	# check function name first
+	func_name = getattr(score_fn, '__name__', None)
+	if func_name:
+		for key, label in sorted(SCORING_LABELS.items(), key=lambda x: -len(x[0])):
+			if key.lower() == func_name.lower():
+				return label
+			if key.lower() in func_name.lower():
+				return label
 	source = inspect.getsource(score_fn)
 	source_dedented = textwrap.dedent(source)
 	tree = ast.parse(source_dedented)
 
+	# check the functions source code
 	for node in ast.walk(tree):
 		if isinstance(node, ast.Call):
 			if isinstance(node.func, ast.Name):
@@ -177,7 +191,9 @@ def infer_score_ylabel(score_fn):
 				name = node.func.attr
 			else:
 				continue
-			for key, label in SCORING_LABELS.items():
+			for key, label in sorted(SCORING_LABELS.items(), key=lambda x: -len(x[0])):
+				if key.lower() == name.lower():
+					return label
 				if key.lower() in name.lower():
 					return label
 	return "Score"
@@ -443,13 +459,13 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 
 		def plot_training(self):
 			def sanitize_plotstyle(ps: PlotStyle):
-				if ps is None: ps = get_plotstlye('')
+				if ps is None: ps = get_plotstyle('')
 				if not (isinstance(ps.M2_training_score_history_title, str)): 
 					ps.M2_training_score_history_title = ''
 				if not (isinstance(ps.M2_training_score_history_xlabel, str)): 
 					ps.M2_training_score_history_xlabel = ''
-				if not (isinstance(ps.M2_training_score_history_ylabel, str)): 
-					ps.M2_training_score_history_ylabel = ''
+				if not (isinstance(ps.score_label, str)): 
+					ps.score_label = ''
 				if not (isinstance(ps.M2_training_score_history_filename, str)): 
 					ps.M2_training_score_history_filename = 'M2_training_score_history'
 				if not (isinstance(ps.save_figure_extension, str)): 
@@ -479,7 +495,7 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			x = range(len(data))
 			ax.plot(x, data)
 			ax.set_xlabel(PS.M2_training_score_history_xlabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
-			ax.set_ylabel(PS.M2_training_score_history_ylabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+			ax.set_ylabel(PS.score_label, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
 			ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)
 			for grid_option in PS.grid_options: ax.grid(**grid_option)
 			if PS.spine_linewidth is not None:
@@ -509,7 +525,7 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 				return
 			import matplotlib.pyplot as plt
 			def sanitize_plotstyle(ps: PlotStyle) -> PlotStyle:
-				if ps is None: ps = get_plotstlye('')
+				if ps is None: ps = get_plotstyle('')
 				if not isinstance(ps.reference_plot_options, dict):
 					ps.reference_plot_options = {}
 				if not isinstance(ps.prediction_plot_options, dict):
@@ -554,6 +570,8 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			ax.set_ylabel(PS.ylabel_temperature, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
 			ax.legend(fontsize=PS.legend_fontsize)
 			ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)
+			ax.annotate(PS.score_label+f' = {SCORE_FUNCTION(y_true,y_pred):0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
+				fontsize=PS.annotate_fontsize, horizontalalignment='right', verticalalignment='bottom')
 			if PS.spine_linewidth is not None:
 				for spine in ax.spines.values(): spine.set_linewidth(PS.spine_linewidth)
 			PlotStyle.settitle_and_savefig(fig, ax,
@@ -706,7 +724,7 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		:return: Negative RMSE (to align with sklearn's maximization convention).
 		"""
 		self._current_prediction = self._model._kernel.predict(X)
-		rmse = root_mean_squared_error(y, self._current_prediction)
+		rmse = SCORE_FUNCTION(y, self._current_prediction)
 		return -rmse
 	def optimize(self, params: M2Kernel.Params) -> M2Kernel.Params:
 			"""
@@ -837,7 +855,7 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 	class Plotter:
 		def plot_crossvalidation(self, y_tests, y_preds, scores, fold_indices):
 			def sanitize_plotstyle(ps: PlotStyle) -> PlotStyle:
-				if ps is None: ps = get_plotstlye('')
+				if ps is None: ps = get_plotstyle('')
 				def _is_valid_figsize_callable(obj):
 					try:
 						if not callable(obj): return False
@@ -891,7 +909,7 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 				for grid_option in PS.grid_options: ax[ff].grid(**grid_option)
 				ax[ff].annotate(f'Fold {ff+1}', xy=(0.01,0.04), xycoords='axes fraction',
 					fontsize=PS.annotate_fontsize, horizontalalignment='left', verticalalignment='bottom')
-				ax[ff].annotate(f'RMSE = {scores[ff]:0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
+				ax[ff].annotate(PS.score_label+f' = {scores[ff]:0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
 					fontsize=PS.annotate_fontsize, horizontalalignment='right', verticalalignment='bottom')
 				ax[ff].legend(loc='lower center', fontsize=PS.legend_fontsize)
 				ax[ff].tick_params(axis='both', labelsize=PS.tick_label_fontsize)
@@ -923,7 +941,7 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 				warnings.warn("y_true and y_pred must have the same length.")
 				return
 			def sanitize_plotstyle(ps: PlotStyle) -> PlotStyle:
-				if ps is None: ps = get_plotstlye('')
+				if ps is None: ps = get_plotstyle('')
 				if not isinstance(ps.reference_plot_options, dict):
 					ps.reference_plot_options = {}
 				if not isinstance(ps.prediction_plot_options, dict):
@@ -971,6 +989,8 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 			ax.set_ylabel(ylabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
 			ax.legend(fontsize=PS.legend_fontsize)
 			ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)
+			ax.annotate(PS.score_label+f' = {SCORE_FUNCTION(y_true,y_pred):0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
+				fontsize=PS.annotate_fontsize, horizontalalignment='right', verticalalignment='bottom')
 			if PS.spine_linewidth is not None:
 				for spine in ax.spines.values(): spine.set_linewidth(PS.spine_linewidth)
 			PlotStyle.settitle_and_savefig(fig, ax,
@@ -1454,7 +1474,7 @@ if __name__ == "__main__":
 			training_stop_flags = M2Optimizer.StopConditions.GLOBAL_MIN_LOSS 
 								| M2Optimizer.StopConditions.GLOBAL_MAX_DURATION 
 			),
-		plotstyle=get_plotstlye('IEEE2025')
+		plotstyle=get_plotstyle('IEEE2025')
 	)
 	m2obj.fit(plot = 							(PP := True),
 		X = df2['CPU'].to_frame(),
@@ -1467,7 +1487,7 @@ if __name__ == "__main__":
 	target_col = 'Temp_residue'
 	df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
 
-	m3obj=M3(plotstyle=get_plotstlye('IEEE2025'))
+	m3obj=M3(plotstyle=get_plotstyle('IEEE2025'))
 	m3obj.cross_validation(plot = 	(PP := True),
 		X = df3.loc[:,df3.columns != target_col],	
 		y = df3.loc[:,target_col],					

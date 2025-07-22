@@ -1,0 +1,42 @@
+# FIGSIZES
+# matplotlib default figsize is (6.4,4.8) inches
+figsize_single:
+  type: figsize
+  value: (3.6,2.7) 
+figsize_multiple:
+  type: figsize
+  value: "lambda n: (3.6, 2.6 * n)"
+
+# FONT SIZES
+# Fontsizes are given in pt. 	1 in = 72 pts
+# Default font size for labels and titles is 10
+label_fontsize:
+  type: fontsize
+  value: 10
+title_fontsize:
+  type: fontsize
+  value: 12
+annotate_fontsize:
+  type: fontsize
+  value: 8
+legend_fontsize:
+  type: fontsize
+  value: 7
+tick_label_fontsize:
+  type: fontsize
+  value: 7
+  
+# LINE WIDTHS
+# Default linewidth for plots is 1.5
+linewidth_thin:
+  type: linewidth
+  value: 0.5
+linewidth_medium:
+  type: linewidth
+  value: 1
+linewidth_thick:
+  type: linewidth
+  value: 1.5
+spine_linewidth:
+  type: linewidth
+  value: 0.5

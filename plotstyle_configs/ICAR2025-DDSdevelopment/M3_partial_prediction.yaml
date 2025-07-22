@@ -1,0 +1,21 @@
+base:
+  type: file
+  value: base_ICAR2025-DDSdevelopment.yaml
+save:
+  type: bool
+  value: True
+
+title:
+  type: title
+  value:
+    en: 'M3 prediction'
+    pt: 'Predição M3'
+xlabel:
+  type: label
+  value: "base/xlabel_timeseries"
+ylabel:
+  type: label
+  value: "base/ylabel_temperaturediff"
+filename:
+  type: filename
+  value: 'M3_partial_prediction'

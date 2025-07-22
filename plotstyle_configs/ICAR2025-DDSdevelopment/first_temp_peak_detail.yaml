@@ -1,0 +1,26 @@
+base:
+  type: file
+  value: base_ICAR2025-DDSdevelopment.yaml
+save:
+  type: bool
+  value: True
+
+figsize:
+  type: figsize
+  value: "layout/figsize_multiple"
+title:
+  type: title
+  value:
+    en: 'Detailed view for detected high CPU segment'
+    pt: 'Detalhe do segmento de alta utilização de CPU'
+xlabel:
+  type: label
+  value: "base/xlabel_timeseries"
+ylabel:
+  type: labellist
+  value: 
+    - "base/ylabel_temperature"
+    - "base/ylabel_cpuload"
+filename:
+  type: filename
+  value: 'First_temp_peak_detail'

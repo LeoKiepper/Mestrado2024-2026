@@ -1,0 +1,26 @@
+base:
+  type: file
+  value: base_ICAR2025-DDSdevelopment.yaml
+save:
+  type: bool
+  value: True
+
+figsize:
+  type: figsize
+  value: "layout/figsize_multiple"
+title:
+  type: title
+  value:
+    en: 'Full length dataset'
+    pt: 'Dataset em duração cheia'
+xlabel:
+  type: label
+  value: "base/xlabel_timeseries"
+ylabel:
+  type: labellist
+  value: 
+    - "base/ylabel_temperature"
+    - "base/ylabel_cpuload"
+filename:
+  type: filename
+  value: 'Dataset_full'

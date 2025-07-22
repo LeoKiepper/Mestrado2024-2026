@@ -1,0 +1,110 @@
+template:
+  type: file
+  value: template_IEEE2025.yaml 
+save_with_title:
+  type: bool
+  value: False
+save_folder:
+  type: directory
+  value: Figures/ICAR2025_DDSdevelopment
+
+# LABEL SUFFIXES
+time_unit_annotation:
+  type: str
+  value: r' $[s]$'
+temperature_unit_annotation:
+  type: str
+  value: r' $[°C]$'
+percent_unit_annotation:
+  type: str
+  value: r' $[\%]$'
+
+# LABELS
+xlabel_timeseries:
+  type: label
+  value:
+    en: 'Time'
+    pt: 'Tempo'
+  suffix:
+    type: str
+    value: "./time_unit_annotation"
+ylabel_temperature:
+  type: label
+  value:
+    en: 'Temperature'
+    pt: 'Temperatura'
+  suffix:
+    type: str
+    value: "./temperature_unit_annotation"
+ylabel_temperaturediff:
+  type: label
+  value:
+    en: 'Temperature difference'
+    pt: 'Diferença de temperatura'
+  suffix:
+    type: str
+    value: "./temperature_unit_annotation"
+ylabel_cpuload:
+  type: label
+  value:
+    en: 'CPU load'
+    pt: 'Utilização da CPU'
+  suffix:
+    type: str
+    value: "./percent_unit_annotation"
+
+# GRID OPTIONS
+grid_options:
+  type: gridoptions
+  value:
+    - which: 
+        type: str
+        value: major
+      color:
+        type: color
+        value: "#e0e0e0"
+      linewidth:
+        type: linewidth
+        value:  0.6
+    - which: 
+        type: str
+        value: minor
+      color:
+        type: color
+        value: "#f0f0f0"
+      linewidth:
+        type: linewidth
+        value:  0.3
+      ls:
+        type: str
+        value: "--"
+
+# SHARED PLOT OPTIONS
+prediction_plot_options:
+  type: plotoptions
+  value:
+    label:
+      type: label
+      value:
+        en: 'Prediction'
+        pt: 'Predição'
+    linewidth:
+      type: linewidth
+      value: linewidth_thick
+    color:
+      type: color
+      value: C1
+reference_plot_options:
+  type: plotoptions
+  value:
+    label:
+      type: label
+      value:
+        en: 'Reference'
+        pt: 'Referência'
+    linewidth:
+      type: linewidth
+      value: linewidth_thin
+    color:
+      type: color
+      value: C0
