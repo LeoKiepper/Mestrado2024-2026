@@ -359,6 +359,21 @@ def __getattr__(self, name):
 	raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
 if __name__ == "__main__":
+	def generate_yaml_files():
+		with open('plot1.yaml', 'w') as f:
+			yaml.dump({
+				'linelabel': {'type':'label','value':'Foo'},
+				'xlabel': {'type':'label','value':'My X Axis Label'},
+				'figsize': {'type':'figsize','value':"lambda n: (6, 2.5 * n)"},
+				}, f, default_flow_style=False)
+		with open('plot2.yaml', 'w') as f:
+			yaml.dump({
+				'linelabel': {'type':'label','value':'Foobar'},
+				'xlabel': {'type':'label','value':'My X Axis Label'},
+				'figsize': {'type':'figsize','value':"lambda n: (6, 2.5 * n)"},
+				}, f, default_flow_style=False)
+	generate_yaml_files()
+
 	PS = get_plotstyle(publication='IEEE2025')
 	PS1 = get_plotstyle(master=PS, params='plot1.yaml')
 	PS2 = get_plotstyle(master=PS1, params='plot2.yaml')
