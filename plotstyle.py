@@ -10,6 +10,29 @@ import yaml
 import warnings
 import ast
 
+# Standardized strings used for yaml files and properties
+BASE_ROLE = 'base'
+TEMPLATE_ROLE = 'template'
+LAYOUT_ROLE = 'layout'
+
+PROP_STRING_SOURCE = 'source'
+PROP_STRING_SOURCE_VALUE_FROM_CONSTANT = 'constant'
+PROP_STRING_SOURCE_VALUE_FROM_FIELD = 'field'
+
+PROP_STRING_VALIDATION = 'validation'
+PROP_STRING_VALIDATION_YAML = 'yaml'
+PROP_STRING_VALIDATION_FIGSIZE = 'figsize'
+PROP_STRING_VALUE = 'value'
+
+
+class NotLambdaFigsize(Exception):
+	pass
+class NotTupleFigsize(Exception):
+	pass
+class RejectedExpression(Exception):
+	pass
+
+
 @dataclass
 class PlotStyle:
 	"""
@@ -68,208 +91,62 @@ class PlotStyle:
 			self.facecolor = None
 		if not _validate_gridoptions(self.grid_options): 
 			self.grid_options = []
-		if not _validate_figsize(self.single_figsize):
+		if not _validate_tuple_figsize(self.single_figsize):
 			self.single_figsize = None
-	# =============== Object control fields ===============
+	# =============== Object control fields (mutable) ===============
 	field_types: dict = field(default_factory=dict)	# contains a dict with the type of each field for validation purposes.
-	master: 'PlotStyle' = field(default = None, repr=False) # contains a reference to the master PlotStyle object, if any.
+	layout: str = field(default_factory=str) # contains the filename to the layout yaml.
+	template: str = field(default_factory=str) # contains the filename to the template yaml.
+	base: str = field(default_factory=str) # contains the filename to the base yaml.
+	_CONFIGS_FOLDER: str = field(default_factory=str) # contains the folder name for the config files.
+	_YAML_PATH: str = field(default_factory=str) # contains the full path to the yaml file.
 
-	# =============== General parameters ================
-	layout: str = field(default = 'two-column', repr=False)
+	def _yaml_parse(self, entry_file: str) -> dict:
+		def _load_yaml(path):
+			with open(path, 'r') as f:
+				return yaml.safe_load(f)
+		def _dump_to_dict(handle: dict, params: dict = {}):
+			def _fetch_value(prop):
+				if prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_CONSTANT:
+					return prop[PROP_STRING_VALUE]
+				elif prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_FIELD:
+					return params[prop[PROP_STRING_VALUE]]
+				else:
+					raise ValueError(f"Invalid source type: {prop[PROP_STRING_SOURCE]}")
+			for key, prop, in handle.items():
+				next_value = _fetch_value(prop)
+				if prop[PROP_STRING_VALIDATION] == PROP_STRING_VALIDATION_YAML:
+					next_value = self.resolve_yaml_path(next_value) if not os.path.isabs(next_value) else next_value
+					if not validate_yaml(next_value): raise ValueError(f"Invalid YAML file: {next_value}")
+					params.update(_dump_to_dict(_load_yaml(next_value), params))
+				elif prop[PROP_STRING_VALIDATION] == PROP_STRING_VALIDATION_FIGSIZE:
+					params.update({key: parse_figsize(next_value)})
+				else:
+					params.update({key: next_value})
+			return params
+		return _dump_to_dict(_load_yaml(entry_file))
+	def resolve_yaml_path(self, filename: str) -> str:
+		for root, _, files in os.walk(self._CONFIGS_FOLDER):
+			if filename in files:
+				return os.path.normpath(os.path.join(root, filename))
+		raise FileNotFoundError(f"YAML file '{filename}' not found in '{self._CONFIGS_FOLDER}' or its subdirectories.")
 
-	plotarea_facecolor: str = '#fbfbfb'
-	fontfamily: str = ''
-	label_fontfamily: str = ''
-	title_fontfamily: str = ''
-	score_history_title: str = ''
-	score_history_xaxis_label: str = ''
-	yaxis_label: str = ''
+	def __init__(self, *, yaml_file: str=None, yaml_list: list=None, master=None, configs_folder: str='plotstyle_configs', base_folder: str=''):
+		if not validate_foldername(configs_folder): raise TypeError("configs_folder is an invalid folder name.")
+		self._CONFIGS_FOLDER = configs_folder
+		if not validate_foldername(base_folder): raise ValueError("base_folder is an invalid folder name.")
+		self._BASE_FOLDER = base_folder
 
-	filename: str = ''
-	file_format: str = 'pdf'		# This is a fallback extension, for when the filename does not provide one.
-	save_with_title = False	# if True, the figure title is drawn before the figure is saved and will show on the saved file.
-	savefig_bbox_inches: str = 'tight'
+		if yaml_file is not None:
+			yaml_file = self.resolve_yaml_path(yaml_file) if not os.path.isabs(yaml_file) else yaml_file
+			if not validate_yaml(yaml_file): raise ValueError(f"Invalid YAML file: {yaml_file}")
+			
+			params = self._yaml_parse(yaml_file)
 
-	time_unit_annotation: str = r' $[s]$'
-	temperature_unit_annotation: str = r' $[°C]$'
-	percent_unit_annotation: str = r' $[\%]$'
-	
-	# =================== Figure specific parameters ===================
-	# figure specific strings that are initialized as empty
-	# strings are to be set by the get_plotstlye function.
-	M2_training_score_history_filename: str = 'M2_training_score_history'
-	M2_training_score_history_savefig: bool = False
-
-	M2_partial_prediction_title: str = ''
-	M2_partial_prediction_filename: str = 'M2_partial_prediction'
-	M2_partial_prediction_savefig: bool = True
-
-	M3_crossvalidation_title: str = ''
-	M3_crossvalidation_filename: str = 'M3_crossvalidation'
-	M3_crossvalidation_savefig: bool = False
-
-	ylabel_temperature_diff: str = ''
-	M3_partial_prediction_title: str = ''
-	M3_partial_prediction_filename: str = 'M3_partial_prediction'
-	M3_partial_prediction_savefig: bool = True
-
-	full_dataset_title: str = ''
-	full_dataset_filename: str = 'Dataset_full'
-	full_dataset_savefig: bool = True
-
-	clipped_dataset_title: str = ''
-	clipped_dataset_filename: str = 'Dataset_clipped'
-	clipped_dataset_savefig: bool = False
-
-	CPU_load_feature_in_legend: str = ''
-	first_temp_peak_detail_title: str = ''
-	first_temp_peak_detail_filename: str = 'First_temp_peak_detail'
-	first_temp_peak_detail_savefig: bool = True
-
-	composite_prediction_title: str = ''
-	composite_prediction_filename: str = 'composite_prediction'
-	composite_prediction_savefig: bool = True
-
-	def __post_init__(self):		# Layout specific parameters
-		if self.layout == 'two-column':
-			self.single_figsize = (3.6,2.7)	# matplotlib default is (6.4,4.8) inches
-			self.multiple_figsize: callable = lambda n: (3.6, 2.6 * n)
-			# fontsizes are given in pt. 	1 in = 72 pts
-			self.label_fontsize: float = 10
-			self.title_fontsize: float = 12
-			self.annotate_fontsize: float = 8
-			self.legend_fontsize: float = 7
-			self.tick_label_fontsize: float = 7
-
-			self.linewidth_thin: float = 0.5
-			self.linewidth_medium: float = 1
-			self.linewidth_thick: float = 1.5
-			self.spine_linewidth: float = self.linewidth_thin
-			self.prediction_plot_options: dict = {'lw':self.linewidth_thick, 'label':'Prediction', 'color':'C1'}
-			self.reference_plot_options: dict = {'lw':self.linewidth_thin, 'label':'Reference', 'color':'C0'}
-			self.grid_options: list = [
-				{'which': 'major', 'color': '#e0e0e0', 'linewidth': 0.6},
-				{'which': 'minor', 'color': '#f0f0f0', 'linewidth': 0.3, 'ls': '--'}
-			]
-		else:			# 'one-column'
-			self.multiple_figsize: callable = lambda n: (6, 2.5 * n)
-			self.label_fontsize: float = 12
-			self.title_fontsize: float = 16
-			self.annotate_fontsize: float = 10
-			self.legend_fontsize: float = 10
-			self.tick_label_fontsize: float = 10
-
-			self.linewidth_thin: float = 0.5
-			self.linewidth_medium: float = 1
-			self.linewidth_thick: float = 1.5
-			self.spine_linewidth: float = self.linewidth_thin
-			self.prediction_plot_options: dict = {'lw':self.linewidth_thick, 'label':'Prediction', 'color':'C1'}
-			self.reference_plot_options: dict = {'lw':self.linewidth_thin, 'label':'Reference', 'color':'C0'}
-			self.grid_options: list = [
-				{'which': 'major', 'color': '#e0e0e0', 'linewidth': 0.6},
-				{'which': 'minor', 'color': '#f0f0f0', 'linewidth': 0.3, 'ls': '--'}
-			]
-	def localize(self, lang='en'):	# Localization for various strings
-		self.prediction_plot_options['label'] = {
-			'en': 'Prediction', 
-			'pt': 'Predição'
-			}[lang]
-		self.reference_plot_options['label'] = {
-			'en': 'Reference',
-			'pt': 'Referência'
-			}[lang]
-		self.score_history_title = {
-			'en': 'Score History',
-			'pt': 'Histórico do score'
-			}[lang]
-		self.score_history_xaxis_label = {
-			'en': 'Iteration',
-			'pt': 'Iteração'
-			}[lang]
-		self.xlabel_time = {
-			'en': 'Time',
-			'pt': 'Tempo'
-			}[lang] + self.time_unit_annotation
-		self.ylabel_temperature = {
-			'en': 'CPU Temperature',
-			'pt': 'Temperatura da CPU'
-			}[lang] + self.temperature_unit_annotation 
-		self.ylabel_temperature_diff = {
-			'en': 'Temperature difference',
-			'pt': 'Diferença de temperatura'
-			}[lang] + self.temperature_unit_annotation
-		self.ylabel_cpu_load = {
-			'en': 'CPU load',
-			'pt': 'Utilização da CPU'
-			}[lang] + self.percent_unit_annotation
-		self.M2_partial_prediction_title = {
-			'en': 'M2 prediction',
-			'pt': 'Predição M2'
-			}[lang]
-		self.M3_partial_prediction_title = {
-			'en': 'M3 prediction',
-			'pt': 'Predição M3'
-			}[lang]
-		self.M3_crossvalidation_title = {
-			'en': 'M3 Cross-validation',
-			'pt': 'Validação cruzada M3'
-			}[lang]
-		self.full_dataset_title = {
-			'en': 'Full length dataset',
-			'pt': 'Dataset em duração cheia'
-			}[lang]
-		self.clipped_dataset_title = {
-			'en': 'Clipped length dataset',
-			'pt': 'Dataset até o primeiro superaquecimento'
-			}[lang]
-		self.first_temp_peak_detail_title = {
-			'en': 'Detailed view for detected high CPU segment',
-			'pt': 'Detalhe do segmento de alta utilização de CPU'
-			}[lang]
-		self.CPU_load_feature_in_legend = {
-			'en': 'CPU load feature',
-			'pt': 'Atributo da utilização da CPU'
-			}[lang]
-		self.composite_prediction_title = {
-			'en': 'Composite prediction',
-			'pt': 'Predição composta'
-			}[lang]
-def get_plotstyle(publication: str=None, master: PlotStyle=None, params: str='') -> PlotStyle:
-	if isinstance(publication, str):
-		# Set publications specific parameter tweaks 
-		match publication:
-			case 'IEEE2025': 	
-				ps = PlotStyle(layout='two-column')
-				ps.localize(lang='en')
-			case _:	
-				ps = PlotStyle(layout='two-column')
-				ps.localize(lang='en')
-		return ps
-	
-	if isinstance(master, PlotStyle):
-		ps = PlotStyle(layout=master.layout)
-		ps.master=master
-		WARN_STRING = lambda key: f"get_plotstyle: Ignoring invalid entry for key '{key}'"
-		with open(params) as f:
-			params: dict = yaml.safe_load(f)
-		for key, entry in params.items():
-			if not isinstance(entry, dict) or not "type" in entry or not "value" in entry:
-				warnings.warn(WARN_STRING(key))
-				continue
-			if entry["type"] == "figsize":
-				tt = _infer_figsize_type(entry["value"])
-				if  tt == 'callable':
-					val = _safe_eval_lambda(entry["value"])
-				elif tt == 'tuple':
-					val = tuple(eval(entry["value"]))
-				elif tt == '': 
-					warnings.warn(WARN_STRING(key))
-					continue
-				setattr(ps, key, val)
-			else:
-				setattr(ps, key, entry["value"])
-			ps.field_types[key] = entry["type"]
-		return ps
+		for key, value in params.items():
+			setattr(self, key, value)
+		# elif yaml_list is not None:
+		# elif master is not None and isinstance(master, PlotStyle):
 def validate_fontfamily(fontname):
     try:
         prop = FontProperties(family=fontname)
@@ -287,6 +164,33 @@ def validate_linewidth(linewidth):
 	if isinstance(linewidth, (int, float)):
 		return linewidth > 0
 	return linewidth == None
+def validate_yaml(yaml_file):
+	if not isinstance(yaml_file, (str, PathLike)): return False
+	if not os.path.isfile(yaml_file): return False
+	try:
+		with open(yaml_file, 'r') as f:
+			yaml.safe_load(f)
+		return True
+	except yaml.YAMLError:
+		return False
+def validate_foldername(name: str) -> bool:
+	if not isinstance(name, str) or not name.strip(): 	return False
+	
+	# Disallowed characters on Windows
+	reserved_names = {
+		"CON", "PRN", "AUX", "NUL",
+		*(f"COM{i}" for i in range(1, 10)),
+		*(f"LPT{i}" for i in range(1, 10))
+	}
+	if name.upper().split('.')[0] in reserved_names: 	return False
+	if any(c in name for c in r'<>:"/\\|?*'): 			return False
+	if any(ord(c) < 32 for c in name): 					return False
+	if name.endswith(' ') or name.endswith('.'): 		return False
+	
+	# Disallowed characters on POSIX
+	# POSIX systems: '/' is invalid in any path segment
+	if '/' in name: return False
+	return True
 def _validate_gridoptions(grid_options):
 	if not isinstance(grid_options, list): return False
 	for opt in grid_options:
@@ -297,28 +201,26 @@ def _validate_gridoptions(grid_options):
 		if ('color'in opt) 		and (not mcolors.is_color_like(opt['color'])): 		return False
 		if ('linewidth' in opt) and (not validate_linewidth(opt['linewidth'])): 	return False
 	return grid_options == []
-def _validate_figsize(figsize):
-	if figsize is callable:
-		try: figsize = figsize(1)
-		except: return False
+
+def _validate_tuple_figsize(figsize):
 	if not isinstance(figsize, tuple): 			return False
 	if len(figsize) != 2: 						return False
 	for dim in figsize:
 		if not isinstance(dim, (int, float)): 	return False
 		if dim <= 0:							return False
-	return figsize == None
-
-def _infer_figsize_type(figsize):
-	if isinstance(figsize, tuple) and len(figsize) == 2:
-		if all(isinstance(dim, (int, float)) for dim in figsize):
-			return 'tuple'
-	else:
-		try:
-			_safe_eval_lambda(figsize)
-			return 'callable'
-		except ValueError:
-			return ''
-def _is_safe_math_expr(expr, allowed_names):
+	return True
+def parse_figsize(expr):
+	try:
+		figsize = _safe_eval_lambda(expr)
+		if _validate_tuple_figsize(figsize(1)): return figsize
+	except NotLambdaFigsize: pass
+	try:
+		try: figsize = eval(expr) if isinstance(expr, str) else expr
+		except Exception: raise NotTupleFigsize
+		if not _validate_tuple_figsize(figsize): raise NotTupleFigsize
+		return figsize
+	except NotTupleFigsize: raise ValueError(f"Invalid figsize expression: {expr}")
+def _is_math_expr_safe(expr, allowed_names):
 	try:
 		node = ast.parse(expr, mode='eval')
 		for n in ast.walk(node):
@@ -336,53 +238,151 @@ def _is_safe_math_expr(expr, allowed_names):
 	except Exception:
 		return False
 def _safe_eval_lambda(expr: str):
-	if not expr.strip().startswith("lambda"):
-		raise ValueError("Only lambda expressions are allowed.")
-	if expr.count(":") != 1:
-		raise ValueError("The expression argument must contain exactly one ':' to separate parameters from the return value.")
+	if isinstance(expr, str) and expr.strip().startswith("lambda"): 
+		if 'lambda' in expr[len("lambda"):-1].lower(): raise RejectedExpression('Lambda expressions are accepted if "lambda" appears only in the beginning of the string.')
+	else:
+		raise NotLambdaFigsize
+	if expr.count(":") != 1: raise ValueError("Lambda expressions must contain exactly one ':' to separate arguments from return.")
 	params = expr[len('lambda '):expr.index(":")].strip()  # removes "lambda " and gets the part before ":"
 	params = [p.strip() for p in params.split(",")]
 	dims = expr.split(":", 1)[1].strip()
-	if not dims[0] == '(' and dims[-1] == ')':
-		raise ValueError("The expression must return a tuple.")
+	if not dims[0] == '(' and dims[-1] == ')': raise ValueError(invalid_tuple_error_string:="The expression must return a tuple of length 2.")
 	dims = [dim.strip() for dim in dims[1:-1].split(",")]
-	if len(dims) != 2:
-		raise ValueError("The expression must return a tuple of length 2.")
+	if len(dims) != 2: raise ValueError(invalid_tuple_error_string)
+
 	for dim in dims:
-		if not _is_safe_math_expr(dim, allowed_names=params):
-			raise ValueError(f"Unsafe expression in dimension: {dim.strip()}")
+		if not _is_math_expr_safe(dim, allowed_names=params): raise ValueError(f"Unsafe expression in dimension: {dim.strip()}")
 	return eval(expr, {"__builtins__": {}}, {})
 
-def __getattr__(self, name):
-	if self.master is not None:
-		return getattr(self.master, name)
-	raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-
 if __name__ == "__main__":
+	EXAMPLE_CONFIGS_FOLDER = 'example_plotstyle_configs'
+	EXAMPLE_BASE_FOLDER = 'figs'
 	def generate_yaml_files():
-		with open('plot1.yaml', 'w') as f:
-			yaml.dump({
-				'linelabel': {'type':'label','value':'Foo'},
-				'xlabel': {'type':'label','value':'My X Axis Label'},
-				'figsize': {'type':'figsize','value':"lambda n: (6, 2.5 * n)"},
+		os.makedirs(os.path.join(EXAMPLE_CONFIGS_FOLDER, EXAMPLE_BASE_FOLDER), exist_ok=True)
+		layout_filename = LAYOUT_ROLE + '.yaml'
+		layout_path = os.path.join(EXAMPLE_CONFIGS_FOLDER, layout_filename)
+		if not os.path.exists(layout_path):
+			with open(layout_path, 'w') as f:
+				yaml.dump({
+					'single_figsize': {
+						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_FIGSIZE,
+						PROP_STRING_SOURCE:PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: '(3.6, 2.7)'
+						},
 				}, f, default_flow_style=False)
-		with open('plot2.yaml', 'w') as f:
-			yaml.dump({
-				'linelabel': {'type':'label','value':'Foobar'},
-				'xlabel': {'type':'label','value':'My X Axis Label'},
-				'figsize': {'type':'figsize','value':"lambda n: (6, 2.5 * n)"},
+		template_filename = TEMPLATE_ROLE + '.yaml'
+		template_path = os.path.join(EXAMPLE_CONFIGS_FOLDER, template_filename)
+		if not os.path.exists(template_path):
+			with open(template_path, 'w') as f:
+				yaml.dump({
+					LAYOUT_ROLE: {
+						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_YAML,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: layout_filename
+						},
+					'label_fontsize': {
+						PROP_STRING_VALIDATION: 'fontsize',
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: 10
+						},
+					'title_fontsize': {
+						PROP_STRING_VALIDATION: 'fontsize',
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: 12
+						}
+				}, f, default_flow_style=False)
+		base_filename = BASE_ROLE + '.yaml'
+		base_path = os.path.join(EXAMPLE_CONFIGS_FOLDER, base_filename)
+		if not os.path.exists(base_path):
+			with open(base_path, 'w') as f:
+				yaml.dump({
+					TEMPLATE_ROLE: {
+						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_YAML,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: template_filename
+						},
+					'savefig_bbox_inches': {
+						PROP_STRING_VALIDATION: 'str',
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: 'tight'
+						},
+					'file_format': {
+						PROP_STRING_VALIDATION: 'str',
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: 'pdf'
+						}
+				}, f, default_flow_style=False)
+		plot1_path = os.path.join(EXAMPLE_CONFIGS_FOLDER, EXAMPLE_BASE_FOLDER, 'plot1.yaml')
+		if not os.path.exists(plot1_path):
+			with open(plot1_path, 'w') as f:
+				yaml.dump({
+					BASE_ROLE: {
+						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_YAML,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: base_filename
+						},
+					'line_label': {
+						PROP_STRING_VALIDATION: 'str',
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: 'Foo'
+						},
+					'xlabel': {
+						PROP_STRING_VALIDATION: 'str',
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: 'My X Axis Label'
+						},
+					'title': {
+						PROP_STRING_VALIDATION: 'str',
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: 'This uses PS1'
+						},
+					'figsize': {
+						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_FIGSIZE,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_FIELD,
+						PROP_STRING_VALUE: 'single_figsize'
+						}
+				}, f, default_flow_style=False)
+		plot2_path = os.path.join(EXAMPLE_CONFIGS_FOLDER, EXAMPLE_BASE_FOLDER, 'plot2.yaml')
+		if not os.path.exists(plot2_path):
+			with open(plot2_path, 'w') as f:
+				yaml.dump({
+					BASE_ROLE: {
+						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_YAML,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: base_filename
+						},
+					'line_label': {
+						PROP_STRING_VALIDATION: 'str',
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: 'Foobar'
+						},
+					'xlabel': {
+						PROP_STRING_VALIDATION: 'str',
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: 'My X Axis Label'
+						},
+					'title': {
+						PROP_STRING_VALIDATION: 'str',
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: 'This uses PS2'
+						},
+					'figsize': {
+						PROP_STRING_VALIDATION: 'figsize',
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_VALUE: "lambda n: (6, 2.5 * n)"
+						}
 				}, f, default_flow_style=False)
 	generate_yaml_files()
 
-	PS = get_plotstyle(publication='IEEE2025')
-	PS1 = get_plotstyle(master=PS, params='plot1.yaml')
-	PS2 = get_plotstyle(master=PS1, params='plot2.yaml')
+	# using chain-referencing
+	PS1 = PlotStyle(yaml_file='plot1.yaml', configs_folder=EXAMPLE_CONFIGS_FOLDER, base_folder=EXAMPLE_BASE_FOLDER)
+	PS2 = PlotStyle(yaml_file='plot2.yaml', configs_folder=EXAMPLE_CONFIGS_FOLDER, base_folder=EXAMPLE_BASE_FOLDER)
 	def plot1(ps: PlotStyle=PS1):
-		fig, ax = plt.subplots(N:=1,figsize=ps.figsize(N))
-		ax.plot([0, 1], [0, 1], label=ps.linelabel)
-		ax.set_title(ps.score_history_title)
-		ax.set_xlabel(ps.yaxis_label)
-		ax.set_ylabel(ps.xlabel)
+		# fig, ax = plt.subplots(N:=1,figsize=ps.figsize)			# Use with PS1
+		fig, ax = plt.subplots(N:=1,figsize=ps.figsize(1))		# Use with PS2
+		ax.plot([0, 1], [0, 1], label=ps.line_label)
+		ax.set_title(ps.title, fontsize=ps.title_fontsize)
+		ax.set_xlabel(ps.xlabel)
 		ax.legend()
 		plt.show()
 	plot1(ps=PS2)
