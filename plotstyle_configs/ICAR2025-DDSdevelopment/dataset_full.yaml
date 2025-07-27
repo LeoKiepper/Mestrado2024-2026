@@ -1,26 +1,34 @@
 base:
-  type: file
-  value: base_ICAR2025-DDSdevelopment.yaml
+  validation: yaml
+  source: constant
+  value: "base_ICAR2025-DDSdevelopment.yaml"
 save:
-  type: bool
+  validation: bool
+  source: constant
   value: True
 
 figsize:
-  type: figsize
-  value: "layout/figsize_multiple"
+  validation: figsize
+  source: field
+  value: "figsize_multiple"
 title:
-  type: title
+  validation: str
+  localizable: True
+  source: constant
   value:
     en: 'Full length dataset'
     pt: 'Dataset em duração cheia'
 xlabel:
-  type: label
-  value: "base/xlabel_timeseries"
+  validation: label
+  source: field
+  value: "xlabel_timeseries"
 ylabel:
-  type: labellist
+  validation: str
+  source: field
   value: 
-    - "base/ylabel_temperature"
-    - "base/ylabel_cpuload"
+    - "ylabel_temperature"
+    - "ylabel_cpuload"
 filename:
-  type: filename
+  validation: filename
+  source: constant
   value: 'Dataset_full'

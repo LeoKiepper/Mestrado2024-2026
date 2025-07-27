@@ -1,110 +1,150 @@
 template:
-  type: file
-  value: template_IEEE2025.yaml 
+  validation: yaml
+  source: constant
+  value: "template_IEEE2025.yaml" 
 save_with_title:
-  type: bool
+  validation: bool
+  source: constant
   value: False
 save_folder:
-  type: directory
-  value: Figures/ICAR2025_DDSdevelopment
+  validation: pathstr
+  source: constant
+  value: "Figures/ICAR2025_DDSdevelopment"
 
 # LABEL SUFFIXES
 time_unit_annotation:
-  type: str
+  validation: str
+  source: constant
   value: r' $[s]$'
 temperature_unit_annotation:
-  type: str
+  validation: str
+  source: constant
   value: r' $[°C]$'
 percent_unit_annotation:
-  type: str
+  validation: str
+  source: constant
   value: r' $[\%]$'
 
 # LABELS
 xlabel_timeseries:
-  type: label
+  validation: str
+  localizable: True
+  source: constant
   value:
     en: 'Time'
     pt: 'Tempo'
   suffix:
-    type: str
-    value: "./time_unit_annotation"
+    validation: str
+    source: filed
+    value: "time_unit_annotation"
 ylabel_temperature:
-  type: label
+  validation: str
+  localizable: True
+  source: constant
   value:
     en: 'Temperature'
     pt: 'Temperatura'
   suffix:
-    type: str
-    value: "./temperature_unit_annotation"
+    validation: str
+    source: field
+    value: "temperature_unit_annotation"
 ylabel_temperaturediff:
-  type: label
+  validation: str
+  localizable: True
+  source: constant
   value:
     en: 'Temperature difference'
     pt: 'Diferença de temperatura'
   suffix:
-    type: str
-    value: "./temperature_unit_annotation"
+    validation: str
+    source: field
+    value: "temperature_unit_annotation"
 ylabel_cpuload:
-  type: label
+  validation: str
+  localizable: True
+  source: constant
   value:
     en: 'CPU load'
     pt: 'Utilização da CPU'
   suffix:
-    type: str
-    value: "./percent_unit_annotation"
+    validation: str
+    source: field
+    value: "percent_unit_annotation"
 
 # GRID OPTIONS
 grid_options:
-  type: gridoptions
+  validation: gridoptions
+  source: constant
   value:
     - which: 
-        type: str
+        validation: str
+        source: constant
         value: major
       color:
-        type: color
+        validation: color
+        source: constant
         value: "#e0e0e0"
       linewidth:
-        type: linewidth
+        validation: linewidth
+        source: constant
         value:  0.6
     - which: 
-        type: str
+        validation: str
+        source: constant
         value: minor
       color:
-        type: color
+        validation: color
+        source: constant
         value: "#f0f0f0"
       linewidth:
-        type: linewidth
+        validation: linewidth
+        source: constant
         value:  0.3
-      ls:
-        type: str
+      linestyle:
+        validation: str
+        source: constant
         value: "--"
 
 # SHARED PLOT OPTIONS
 prediction_plot_options:
-  type: plotoptions
+  validation: plotoptions
+  source: constant
   value:
     label:
-      type: label
+      validation: str
+      localizable: True
+      source: constant
       value:
         en: 'Prediction'
         pt: 'Predição'
     linewidth:
-      type: linewidth
+      validation: linewidth
+      source: constant
       value: linewidth_thick
     color:
-      type: color
+      validation: color
+      source: constant
       value: C1
 reference_plot_options:
-  type: plotoptions
+  validation: plotoptions
+  source: constant
   value:
     label:
-      type: label
+      validation: str
+      localizable: True
+      source: constant
       value:
         en: 'Reference'
         pt: 'Referência'
     linewidth:
-      type: linewidth
+      validation: linewidth
+      source: constant
       value: linewidth_thin
     color:
-      type: color
+      validation: color
+      source: constant
       value: C0
+plotarea_facecolor:
+  validation: color
+  source: constant
+  value: '#fbfbfb'

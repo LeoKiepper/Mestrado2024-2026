@@ -1,21 +1,28 @@
 base:
-  type: file
-  value: base_ICAR2025-DDSdevelopment.yaml
+  validation: yaml
+  source: constant
+  value: "base_ICAR2025-DDSdevelopment.yaml"
 save:
-  type: bool
+  validation: bool
+  source: constant
   value: True
 
 title:
-  type: title
+  validation: title
+  localizable: True
+  source: constant
   value:
     en: 'M3 prediction'
     pt: 'Predição M3'
 xlabel:
-  type: label
-  value: "base/xlabel_timeseries"
+  validation: str
+  source: field
+  value: "xlabel_timeseries"
 ylabel:
-  type: label
-  value: "base/ylabel_temperaturediff"
+  validation: str
+  source: field
+  value: "ylabel_temperaturediff"
 filename:
-  type: filename
+  validation: filename
+  source: constant
   value: 'M3_partial_prediction'

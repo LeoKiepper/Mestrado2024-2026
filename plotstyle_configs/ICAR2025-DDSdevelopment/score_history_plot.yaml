@@ -1,21 +1,28 @@
 base:
-  type: file
-  value: base_ICAR2025-DDSdevelopment.yaml
+  validation: yaml
+  source: constant
+  value: "base_ICAR2025-DDSdevelopment.yaml"
 save:
-  type: bool
+  validation: bool
+  source: constant
   value: False
 
 title:
-  type: title
+  validation: title
+  localizable: True
+  source: constant
   value:
     en: 'Score History'
     pt: 'Histórico do score'
 xlabel:
-  type: label
+  validation: label
+  localizable: True
+  source: constant
   value:
     en: 'Iteration'
     pt: 'Iteração'
 # ylabel is inferred in code, because doing so in YAML is impractical
 filename:
-  type: filename
+  validation: filename
+  source: constant
   value: 'M2_training_score_history'

@@ -1,25 +1,33 @@
 base:
-  type: file
-  value: base_ICAR2025-DDSdevelopment.yaml
+  validation: yaml
+  source: constant
+  value: "base_ICAR2025-DDSdevelopment.yaml"
 save:
-  type: bool
+  validation: bool
+  source: constant
   value: False
 
 figsize:
-  type: figsize
-  value: "layout/figsize_multiple"
+  validation: figsize
+  source: field
+  value: "figsize_multiple"
 title:
-  type: title
+  validation: str
+  localizable: True
+  source: constant
   value:
     en: 'M3 cross-validation'
     pt: 'Validação cruzada M3'
 xlabel:
-  type: label
-  value: "base/xlabel_timeseries"
+  validation: str
+  source: field
+  value: "xlabel_timeseries"
 ylabel:
-  type: label
-  value: "base/ylabel_temperaturediff"
+  validation: str
+  source: field
+  value: "ylabel_temperaturediff"
   shared: True
 filename:
-  type: filename
+  validation: filename
+  source: constant
   value: 'M3_crossvalidation'
