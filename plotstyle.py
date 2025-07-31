@@ -19,13 +19,18 @@ ROLE_BASE = 'base'
 ROLE_TEMPLATE = 'template'
 ROLE_LAYOUT = 'layout'
 
+PROP_STRING_KEEP = 'keep'
+KEEP_DEFAULT_VALUE_FROM_FIELD = False
+KEEP_DEFAULT_VALUE_FROM_LITERAL = True
+
 
 PROP_STRING_SOURCE = 'source'
 PROP_STRING_SOURCE_VALUE_FROM_LITERAL = 'literal'
 PROP_STRING_SOURCE_VALUE_FROM_FIELD = 'field'
-
-PROP_STRING_VALIDATION = 'validation'
-PROP_STRING_VALIDATION_GRIDOPTIONS = 'gridoptions'
+SOURCE_TYPE_DEFAULT_KEEP = {	# Add new PROP_STRING_SOURCE types here
+	PROP_STRING_SOURCE_VALUE_FROM_LITERAL: True,
+	PROP_STRING_SOURCE_VALUE_FROM_FIELD: False,
+}
 
 PROP_STRING_VALUE = 'value'
 PROP_STRING_SUFFIX = 'suffix'
@@ -69,7 +74,7 @@ class PlotStyle:
 			if save_with_title: set_title()
 			if savefig: fig.savefig(**savefig_options)
 			if not save_with_title: set_title()
-	def _cull_redundant_fields(self):
+	def _delete_marked_fields(self):
 		for key in self.__marked_for_delete__:
 			if key in self.__params__: self.__params__.pop(key)
 	def _yaml_parse(self, entry_file: str) -> dict:
@@ -87,10 +92,7 @@ class PlotStyle:
 			def _fetch_value(key: str, prop: dict):
 				if not PROP_STRING_SOURCE in prop.keys(): raise SourceFieldMissing
 				if prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_LITERAL: return prop[PROP_STRING_VALUE]
-				elif prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_FIELD:
-					if not prop[PROP_STRING_VALUE] in self.__marked_for_delete__:
-						self.__marked_for_delete__.append(prop[PROP_STRING_VALUE])
-					return (dump_to | read_from)[prop[PROP_STRING_VALUE]]
+				elif prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_FIELD: return (dump_to | read_from)[prop[PROP_STRING_VALUE]]
 				else: raise InvalidSourceType
 			def _parse_prop(key: str, prop: dict):
 				try:
@@ -109,15 +111,21 @@ class PlotStyle:
 					new_key = AFFIX_KEY_FORMAT.format(key=key, affix=affix_type)
 					self.__affix__.update({new_key: _parse_prop(key, prop[affix_type])})
 					_register_localizable(new_key, prop[affix_type])				
+			def _mark_for_delete(key: str, prop: dict):
+				def _mark():
+					if prop[PROP_STRING_VALUE] not in self.__marked_for_delete__: self.__marked_for_delete__.append(prop[PROP_STRING_VALUE])
+				if PROP_STRING_KEEP in prop: keep = VALIDATORS[PROP_STRING_VALIDATION_BOOL].sanitize(prop[PROP_STRING_KEEP])
+				else: keep = SOURCE_TYPE_DEFAULT_KEEP.get(prop.get(PROP_STRING_SOURCE), False)
+				if not keep: _mark()
+
 			for key, prop, in handle.items():				
-				# Treat recursive yaml parsing separately
-				if prop[PROP_STRING_VALIDATION] == PROP_STRING_VALIDATION_YAML:
+				if prop[PROP_STRING_VALIDATION] == PROP_STRING_VALIDATION_YAML:  # Treat recursive yaml parsing separately
 					try:
 						path = _fetch_value(key, prop)	# First call self.resolve_yaml_path, then validate
-						self.__file_stack__.append(path)						# for debugging
+						self.__file_stack__.append(path)							# for debugging
 						path = self._resolve_yaml_path(path)
 						dump_to.update(_dump_to_dict(_load_yaml(VALIDATORS[PROP_STRING_VALIDATION_YAML].parse(path)), dump_to=dump_to))
-						self.__file_stack__ = self.__file_stack__[:-1]	# for debugging
+						self.__file_stack__ = self.__file_stack__[:-1]				# for debugging
 					except Exception as e:
 						warnings.warn(IGNORE_FIELD_MSG.format(error=e, key=key))
 						continue
@@ -130,13 +138,14 @@ class PlotStyle:
 						warnings.warn(IGNORE_FIELD_MSG.format(error=e, key=key))
 						continue
 					_register_localizable(key, prop)
-					# check affixes
 					for affix_type in AFFIX_TYPES:
 						try:
 							_register_affixable(key, prop, affix_type)
 						except Exception as e:
 							warnings.warn(IGNORE_FIELD_MSG.format(error=e, key=key+'.'+affix_type))
 							continue
+					_mark_for_delete(key, prop)
+
 			return dump_to
 		return _dump_to_dict(_load_yaml(entry_file))
 	def _resolve_yaml_path(self, filename: str) -> str:
@@ -155,7 +164,7 @@ class PlotStyle:
 			if affix == PROP_STRING_SUFFIX: self.__params__.update({key: self.__params__[key] + value})
 			elif affix == PROP_STRING_PREFIX: self.__params__.update({key: value + self.__params__[key]})
 			else: raise ValueError(f"Unknown affix type for key {key}")
-	def __init__(self, *, yaml_file: str=None, yaml_list: list=None, master=None, language: str = LOCALIZATION_ENGLISH, configs_folder: str='plotstyle_configs', base_folder: str='', cull_redundant_fields: bool = True):
+	def __init__(self, *, yaml_file: str=None, yaml_list: list=None, master=None, language: str = LOCALIZATION_ENGLISH, configs_folder: str='plotstyle_configs', base_folder: str='', keep_all_fields: bool = False):
 		if not VALIDATORS[PROP_STRING_VALIDATION_PATHSTR].validate(configs_folder): 
 			raise TypeError("configs_folder is an invalid folder name.")
 		self.CONFIGS_FOLDER = configs_folder
@@ -184,7 +193,7 @@ class PlotStyle:
 
 		self._apply_localization()
 		self._apply_affixes()
-		if cull_redundant_fields: self._cull_redundant_fields()
+		if not keep_all_fields: self._delete_marked_fields()
 		# Load attributes from yaml file onto the object
 		for key, value in self.__params__.items():
 			setattr(self, key, value)

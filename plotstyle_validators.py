@@ -23,6 +23,7 @@ class ParseError(Exception):
 
 VALIDATORS: dict[str, Validator] = {}
 CONTEXT_FIELD_PARSER_FUNC = 'field_parser'
+PROP_STRING_VALIDATION = 'validation'
 class Validator(ABC):
 	@abstractmethod
 	def validate(self, value: Any, **context) -> bool: ...
@@ -312,8 +313,6 @@ class GridoptionsValidator(Validator):
 		if not self.validate(value, **context): raise ValueError("Invalid gridoptions structure")
 		return value
 	def sanitize(self, value, **context) -> list:
-		if self.validate(value, **context):
-			return self.parse(value, **context)
-		else:
-			return []
+		if not self.validate(value, **context): return []
+		return value
 #endregion
