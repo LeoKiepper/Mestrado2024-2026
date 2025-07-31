@@ -22,6 +22,7 @@ class ParseError(Exception):
 	pass
 
 VALIDATORS: dict[str, Validator] = {}
+CONTEXT_FIELD_PARSER_FUNC = 'field_parser'
 class Validator(ABC):
 	@abstractmethod
 	def validate(self, value: Any, **context) -> bool: ...
@@ -39,35 +40,13 @@ def register_validator(name: str):
 	return decorator
 
 #%% Helper functions
-def validate_pathstr(path_str: str) -> bool:
-	if not isinstance(path_str, str) or not path_str.strip():
-		return False
-	
-	norm = os.path.normpath(path_str)
-	drive, tail = os.path.splitdrive(norm)
-	segments = tail.split(os.sep)
-	for seg in segments:
-		if not seg: continue
-		if seg in (os.curdir, os.pardir): continue
-
-		_RESERVED_NAMES = {
-			"CON", "PRN", "AUX", "NUL",
-			*(f"COM{i}" for i in range(1, 10)),
-			*(f"LPT{i}" for i in range(1, 10))
-		}
-		if seg.upper().split('.')[0] in _RESERVED_NAMES: 	return False
-		if any(c in set(r'<>:"/\\|?*') for c in seg): 		return False
-		if any(ord(c) < 32 for c in seg): 					return False
-		if seg.endswith(' ') or seg.endswith('.'): 			return False
-	return True
-
 
 #%% Validator registries
 #region pathstr validator
 PROP_STRING_VALIDATION_PATHSTR = "pathstr"
 @register_validator(PROP_STRING_VALIDATION_PATHSTR)
 class PathstrValidator(Validator):
-	def validate(self, value: Any) -> bool:
+	def validate(self, value: Any, **context) -> bool:
 		if not isinstance(value, str) or not value.strip():
 			return False
 		
@@ -88,10 +67,10 @@ class PathstrValidator(Validator):
 			if any(ord(c) < 32 for c in seg): 					return False
 			if seg.endswith(' ') or seg.endswith('.'): 			return False
 		return True
-	def parse(self, value: Any) -> str:
+	def parse(self, value: Any, **context) -> str:
 		if not self.validate(value): raise ValueError(f"Not a valid pathstr: {value}")
 		return value
-	def sanitize(self, value) -> str:
+	def sanitize(self, value: Any, **context) -> str:
 		if not self.validate(value): return False
 		else: return value
 #endregion
@@ -112,10 +91,10 @@ class FilenameValidator(Validator):
 PROP_STRING_VALIDATION_YAML = "yaml"
 @register_validator(PROP_STRING_VALIDATION_YAML)
 class YamlValidator(Validator):
-	def sanitize(self, value) -> Any:
+	def sanitize(self, value: Any, **context) -> Any:
 		if not self.validate(value): return ""
 		else: return value
-	def validate(self, value: Any) -> bool:
+	def validate(self, value: Any, **context) -> bool:
 		if not VALIDATORS[PROP_STRING_VALIDATION_PATHSTR].validate(value): return False
 		if not os.path.isfile(value): return False
 		try:
@@ -123,7 +102,7 @@ class YamlValidator(Validator):
 			return True
 		except yaml.YAMLError:
 			return False
-	def parse(self, value: str) -> str:
+	def parse(self, value: str, **context) -> str:
 		if not self.validate(value): raise ValueError(f"Invalid YAML path: {value}")
 		return os.path.normpath(value)
 #endregion
@@ -132,12 +111,12 @@ class YamlValidator(Validator):
 PROP_STRING_VALIDATION_FILEFORMAT = "fileformat"
 @register_validator(PROP_STRING_VALIDATION_FILEFORMAT)
 class FileformatValidator(Validator):
-	def validate(self, value: Any) -> bool:
+	def validate(self, value: Any, **context) -> bool:
 		return value in FigureCanvasAgg(Figure()).get_supported_filetypes()
-	def parse(self, value: Any) -> str:
+	def parse(self, value: Any, **context) -> str:
 		if not self.validate(value): raise ValueError(f"Unsopported file format: {value}")
 		return value
-	def sanitize(self, value) -> str:
+	def sanitize(self, value: Any, **context) -> str:
 		if not self.validate(value): return None
 		else: return value
 #endregion
@@ -145,14 +124,14 @@ class FileformatValidator(Validator):
 PROP_STRING_VALIDATION_STR = "str"
 @register_validator(PROP_STRING_VALIDATION_STR)
 class StrValidator(Validator):
-	def validate(self, value: Any) -> bool:
+	def validate(self, value: Any, **context) -> bool:
 		if isinstance(value,dict):
 			return all(isinstance(v,str) for v in value.values())
 		return isinstance(value, str)
-	def parse(self, value: Any) -> str:
+	def parse(self, value: Any, **context) -> str:
 		if not self.validate(value): raise ValueError(f"Expected string, got {type(value).__name__}")
 		return value
-	def sanitize(self, value) -> str:
+	def sanitize(self, value: Any, **context) -> str:
 		if not self.validate(value): return ""
 		else: return value
 #endregion
@@ -160,12 +139,12 @@ class StrValidator(Validator):
 PROP_STRING_VALIDATION_BOOL = "bool"
 @register_validator(PROP_STRING_VALIDATION_BOOL)
 class BoolValidator(Validator):
-	def validate(self, value: Any) -> bool:
+	def validate(self, value: Any, **context) -> bool:
 		return isinstance(value, bool)
-	def parse(self, value: Any) -> str:
+	def parse(self, value: Any, **context) -> str:
 		if not self.validate(value): raise ValueError(f"Not a bool: {value}")
 		return value
-	def sanitize(self, value) -> str:
+	def sanitize(self, value: Any, **context) -> str:
 		if not self.validate(value): return False
 		else: return value
 #endregion
@@ -173,12 +152,12 @@ class BoolValidator(Validator):
 PROP_STRING_VALIDATION_COLOR = "color"
 @register_validator(PROP_STRING_VALIDATION_COLOR)
 class ColorValidator(Validator):
-	def validate(self, value: Any) -> bool:
+	def validate(self, value: Any, **context) -> bool:
 		return mcolors.is_color_like(value)
-	def parse(self, value: Any) -> str:
+	def parse(self, value: Any, **context) -> str:
 		if not self.validate(value): raise ValueError(f"Not a valid color: {value}")
 		return value
-	def sanitize(self, value) -> str:
+	def sanitize(self, value: Any, **context) -> str:
 		if not self.validate(value): return None
 		else: return value
 #endregion
@@ -187,17 +166,17 @@ class ColorValidator(Validator):
 PROP_STRING_VALIDATION_FONTFAMILY = "fontfamily"
 @register_validator(PROP_STRING_VALIDATION_FONTFAMILY)
 class FontfamilyValidator(Validator):
-	def validate(self, value: Any) -> bool:
+	def validate(self, value: Any, **context) -> bool:
 		try:
 			prop = FontProperties(family=value)
 			fontpath = findfont(prop, fallback_to_default=False)
 			return True
 		except Exception:
 			return False
-	def parse(self, value: Any) -> str:
+	def parse(self, value: Any, **context) -> str:
 		if not self.validate(value): raise ValueError(f"Font family not found: {value}")
 		return value
-	def sanitize(self, value) -> str:
+	def sanitize(self, value: Any, **context) -> str:
 		if not self.validate(value): return None
 		else: return value
 #endregion
@@ -206,16 +185,16 @@ class FontfamilyValidator(Validator):
 PROP_STRING_VALIDATION_FONTSIZE = "fontsize"
 @register_validator(PROP_STRING_VALIDATION_FONTSIZE)
 class FontsizeValidator(Validator):
-	def validate(self, value: Any) -> bool:
+	def validate(self, value: Any, **context) -> bool:
 		if isinstance(value, (int, float)):
 			return value > 0
 		if isinstance(value, str):
 			return value in ['xx-small', 'x-small', 'small', 'medium', 'large', 'x-large', 'xx-large']
 		return value == None
-	def parse(self, value: Any) -> str:
+	def parse(self, value: Any, **context) -> str:
 		if not self.validate(value): raise ValueError(f"Not a valid fontsize: {value}")
 		return value
-	def sanitize(self, value) -> str:
+	def sanitize(self, value: Any, **context) -> str:
 		if not self.validate(value): return None
 		else: return value
 #endregion
@@ -223,13 +202,13 @@ class FontsizeValidator(Validator):
 PROP_STRING_VALIDATION_LINEWIDTH = "linewidth"
 @register_validator(PROP_STRING_VALIDATION_LINEWIDTH)
 class LinewidthValidator(Validator):
-	def validate(self, value: Any) -> bool:
+	def validate(self, value: Any, **context) -> bool:
 		if isinstance(value, (int, float)): return value > 0
 		return value == None
-	def parse(self, value: Any) -> str:
+	def parse(self, value: Any, **context) -> str:
 		if not self.validate(value): raise ValueError(f"Not a valid linewidth: {value}")
 		return value
-	def sanitize(self, value) -> str:
+	def sanitize(self, value: Any, **context) -> str:
 		if not self.validate(value): return None
 		else: return value
 #endregion
@@ -287,7 +266,7 @@ class FigsizeValidator(Validator):
 		for dim in value:
 			if not isinstance(dim, (int, float)): raise ValueError('Tuple must have a number on all positions')
 			if dim <= 0: raise ValueError('All dimensions must be greater than zero')
-	def validate(self, value: str) -> bool:
+	def validate(self, value: str, **context) -> bool:
 		try:
 			self._check_lambda_str(value)
 			return True
@@ -301,44 +280,40 @@ class FigsizeValidator(Validator):
 			return True
 		except: pass
 		return False
-	def parse(self, value: Any) -> tuple | callable:
+	def parse(self, value: Any, **context) -> tuple | callable:
 		if not self.validate(value): raise ValueError(f"figsize {value} in unexpected format")
 		if isinstance(value, str):
 			return self._safe_eval(value)
 		if isinstance(value, tuple):
 			return value
-	def sanitize(self, value) -> str:
+	def sanitize(self, value: Any, **context) -> str:
 		if not self.validate(value): return None
 		else: return self._safe_eval(value)
 #endregion
 
+#region gridoptions validator
 PROP_STRING_VALIDATION_GRIDOPTIONS = "gridoptions"
 @register_validator(PROP_STRING_VALIDATION_GRIDOPTIONS)
 class GridoptionsValidator(Validator):
 	def validate(self, value: Any, **context) -> bool:
 		if not isinstance(value, list): return False
-		field_parser = context.get("field_parser")
+		field_parser = context.get(CONTEXT_FIELD_PARSER_FUNC)
 		if not callable(field_parser): return False
 		for item in value:
 			if not isinstance(item, dict): return False
 			try:
 				for subkey, subprop in item.items():
 					if not isinstance(subprop, dict): return False
-					field_parser(subkey, subprop, dry_run=True)
-			except Exception: return False
+					field_parser({subkey: subprop})
+			except Exception as e: 
+				return False
 		return True
 	def parse(self, value: Any, **context) -> list[dict]:
 		if not self.validate(value, **context): raise ValueError("Invalid gridoptions structure")
-		field_parser = context["field_parser"]
-		parsed_list = []
-		for item in value:
-			parsed_dict = {}
-			for subkey, subprop in item.items():
-				parsed_dict[subkey] = field_parser(subkey, subprop)
-			parsed_list.append(parsed_dict)
-		return parsed_list
+		return value
 	def sanitize(self, value, **context) -> list:
 		if self.validate(value, **context):
 			return self.parse(value, **context)
 		else:
 			return []
+#endregion

@@ -21,7 +21,7 @@ ROLE_LAYOUT = 'layout'
 
 
 PROP_STRING_SOURCE = 'source'
-PROP_STRING_SOURCE_VALUE_FROM_CONSTANT = 'constant'
+PROP_STRING_SOURCE_VALUE_FROM_LITERAL = 'literal'
 PROP_STRING_SOURCE_VALUE_FROM_FIELD = 'field'
 
 PROP_STRING_VALIDATION = 'validation'
@@ -83,19 +83,22 @@ class PlotStyle:
 					return yaml.safe_load(f)
 			except yaml.YAMLError:
 				raise yaml.YAMLError(YAML_LOADING_ERROR_MSG.format(path=path))
-		def _dump_to_dict(handle: dict, params: dict = {}):
+		def _dump_to_dict(handle: dict, dump_to: dict = {}, read_from: dict ={}):
 			def _fetch_value(key: str, prop: dict):
 				if not PROP_STRING_SOURCE in prop.keys(): raise SourceFieldMissing
-				if prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_CONSTANT: return prop[PROP_STRING_VALUE]
+				if prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_LITERAL: return prop[PROP_STRING_VALUE]
 				elif prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_FIELD:
-					self.__marked_for_delete__.append(prop[PROP_STRING_VALUE])
-					return params[prop[PROP_STRING_VALUE]]
+					if not prop[PROP_STRING_VALUE] in self.__marked_for_delete__:
+						self.__marked_for_delete__.append(prop[PROP_STRING_VALUE])
+					return (dump_to | read_from)[prop[PROP_STRING_VALUE]]
 				else: raise InvalidSourceType
 			def _parse_prop(key: str, prop: dict):
 				try:
 					validator = VALIDATORS.get(prop[PROP_STRING_VALIDATION])
 					if not validator: raise UnkownValidator(UNKNOWN_VALIDATOR_MSG.format(validator=prop[PROP_STRING_VALIDATION], key=key))
-					return validator.parse(_fetch_value(key, prop))
+					return validator.parse(_fetch_value(key, prop), **{
+						CONTEXT_FIELD_PARSER_FUNC: lambda handle: _dump_to_dict(handle, dump_to={}, read_from=dump_to)
+						})
 				except Exception as e:
 					raise ParseError(PARSE_ERROR_MSG.format(key=key, validator=prop[PROP_STRING_VALIDATION], error=e))
 			def _register_localizable(key: str, prop: dict):
@@ -111,17 +114,17 @@ class PlotStyle:
 				if prop[PROP_STRING_VALIDATION] == PROP_STRING_VALIDATION_YAML:
 					try:
 						path = _fetch_value(key, prop)	# First call self.resolve_yaml_path, then validate
-						self.__file_sequence__.append(path)						# for debugging
+						self.__file_stack__.append(path)						# for debugging
 						path = self._resolve_yaml_path(path)
-						params.update(_dump_to_dict(_load_yaml(VALIDATORS[PROP_STRING_VALIDATION_YAML].parse(path)), params))
-						self.__file_sequence__ = self.__file_sequence__[:-1]	# for debugging
+						dump_to.update(_dump_to_dict(_load_yaml(VALIDATORS[PROP_STRING_VALIDATION_YAML].parse(path)), dump_to=dump_to))
+						self.__file_stack__ = self.__file_stack__[:-1]	# for debugging
 					except Exception as e:
 						warnings.warn(IGNORE_FIELD_MSG.format(error=e, key=key))
 						continue
 				else: # Treat all other validation types
 					try:
 						parsed_value = _parse_prop(key, prop)
-						params.update({key:parsed_value})
+						dump_to.update({key:parsed_value})
 						self.__field_validation__.update({key:prop[PROP_STRING_VALIDATION]})
 					except Exception as e:
 						warnings.warn(IGNORE_FIELD_MSG.format(error=e, key=key))
@@ -134,7 +137,7 @@ class PlotStyle:
 						except Exception as e:
 							warnings.warn(IGNORE_FIELD_MSG.format(error=e, key=key+'.'+affix_type))
 							continue
-			return params
+			return dump_to
 		return _dump_to_dict(_load_yaml(entry_file))
 	def _resolve_yaml_path(self, filename: str) -> str:
 		for root, _, files in os.walk(self.CONFIGS_FOLDER):
@@ -165,11 +168,11 @@ class PlotStyle:
 		self.__affix__ = {}
 		self.__marked_for_delete__ = []
 		# Reporting variables for debugging purposes
-		self.__file_sequence__ = []
+		self.__file_stack__ = []
 
 
 		if yaml_file is not None:
-			self.__file_sequence__.append(yaml_file) 
+			self.__file_stack__.append(yaml_file) 
 			yaml_file = self._resolve_yaml_path(yaml_file) if not os.path.isabs(yaml_file) else yaml_file
 			if not VALIDATORS[PROP_STRING_VALIDATION_YAML].validate(yaml_file):
 				raise ValueError(f"Invalid YAML file: {yaml_file}")
@@ -200,7 +203,7 @@ if __name__ == "__main__":
 				yaml.dump({
 					'single_figsize': {
 						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_FIGSIZE,
-						PROP_STRING_SOURCE:PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE:PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: '(3.6, 2.7)'
 						},
 				}, f, default_flow_style=False)
@@ -211,17 +214,17 @@ if __name__ == "__main__":
 				yaml.dump({
 					ROLE_LAYOUT: {
 						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_YAML,
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: layout_filename
 						},
 					'label_fontsize': {
 						PROP_STRING_VALIDATION: 'fontsize',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: 10
 						},
 					'title_fontsize': {
 						PROP_STRING_VALIDATION: 'fontsize',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: 12
 						}
 				}, f, default_flow_style=False)
@@ -232,17 +235,17 @@ if __name__ == "__main__":
 				yaml.dump({
 					ROLE_TEMPLATE: {
 						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_YAML,
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: template_filename
 						},
 					'savefig_bbox_inches': {
 						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: 'tight'
 						},
 					'file_format': {
 						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: 'pdf'
 						}
 				}, f, default_flow_style=False)
@@ -253,22 +256,22 @@ if __name__ == "__main__":
 				yaml.dump({
 					ROLE_BASE: {
 						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_YAML,
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: base_filename
 						},
 					'line_label': {
 						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: 'Foo'
 						},
 					'ylabel': {
 						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: 'My Y Axis Label'
 						},
 					'title': {
 						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: 'This uses PS1'
 						},
 					'figsize': {
@@ -278,7 +281,7 @@ if __name__ == "__main__":
 						},
 					'xlabel':{
 						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_STR,
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_LOCALIZABLE: True,
 						PROP_STRING_VALUE: {
 							LOCALIZATION_ENGLISH: 'My X Axis Label',
@@ -286,12 +289,12 @@ if __name__ == "__main__":
 						},
 						PROP_STRING_SUFFIX: {
 							PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_STR,
-							PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+							PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 							PROP_STRING_VALUE: '[unlocalized suffix]'
 						},
 						PROP_STRING_PREFIX: {
 							PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_STR,
-							PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+							PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 							PROP_STRING_LOCALIZABLE: True,
 							PROP_STRING_VALUE: {
 								LOCALIZATION_ENGLISH: '[localized prefix]',
@@ -306,34 +309,34 @@ if __name__ == "__main__":
 				yaml.dump({
 					ROLE_BASE: {
 						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_YAML,
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: base_filename
 						},
 					'line_label': {
 						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: 'Foobar'
 						},
 					'xlabel': {
 						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: 'My X Axis Label'
 						},
 					'title': {
 						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: 'This uses PS2'
 						},
 					'figsize': {
 						PROP_STRING_VALIDATION: 'figsize',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_CONSTANT,
+						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
 						PROP_STRING_VALUE: "lambda n: (6, 2.5 * n)"
 						}
 				}, f, default_flow_style=False)
 	generate_yaml_files()
 
 	# using chain-referencing
-	PS1 = PlotStyle(yaml_file='plot1.yaml', configs_folder=EXAMPLE_CONFIGS_FOLDER, base_folder=EXAMPLE_BASE_FOLDER, language=LOCALIZATION_PROTUGUESE)
+	PS1 = PlotStyle(yaml_file='plot1.yaml', configs_folder=EXAMPLE_CONFIGS_FOLDER, base_folder=EXAMPLE_BASE_FOLDER, language=LOCALIZATION_ENGLISH)
 	# PS2 = PlotStyle(yaml_file='plot2.yaml', configs_folder=EXAMPLE_CONFIGS_FOLDER, base_folder=EXAMPLE_BASE_FOLDER)
 	def plot1(ps: PlotStyle=PS1):
 		fig, ax = plt.subplots(N:=1,figsize=ps.figsize)			# Use with PS1
