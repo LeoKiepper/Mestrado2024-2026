@@ -50,6 +50,9 @@ class PlotStyle:
 	time_unit_annotation: str = r' $[s]$'
 	temperature_unit_annotation: str = r' $[°C]$'
 	percent_unit_annotation: str = r' $[\%]$'
+	time_unit_annotation: str = ' [s]'
+	temperature_unit_annotation: str = ' [°C]'
+	percent_unit_annotation: str = ' [%]'
 	savefig_bbox_inches: str = 'tight'
 	save_figure_extension: str = 'pdf' # This is used as the default extension, for when the filename does not provide one.
 	save_with_title = False	# if True, the figure title is drawn before the figure is saved and will show on the saved file.

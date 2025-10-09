@@ -7,11 +7,11 @@ import yaml
 from parse import parse
 from plotstyle_validators import *
 from plotstyle_validators import UnkownValidator,ParseError
-
+import plotstyle
 
 import warnings	# leave this import last for neat folding of the import block
 def custom_showwarning(message, category, filename, lineno, file=None, line=None):
-	print(f"{message}")
+	print(f"{lineno}: {message}")
 warnings.showwarning = custom_showwarning
 
 # Standardized strings used for yaml files and properties
@@ -19,14 +19,15 @@ ROLE_BASE = 'base'
 ROLE_TEMPLATE = 'template'
 ROLE_LAYOUT = 'layout'
 
-PROP_STRING_KEEP = 'keep'
-KEEP_DEFAULT_VALUE_FROM_FIELD = False
-KEEP_DEFAULT_VALUE_FROM_LITERAL = True
 
 
 PROP_STRING_SOURCE = 'source'
 PROP_STRING_SOURCE_VALUE_FROM_LITERAL = 'literal'
 PROP_STRING_SOURCE_VALUE_FROM_FIELD = 'field'
+PROP_STRING_KEEP = 'keep'
+KEEP_DEFAULT_VALUE_FROM_FIELD = False
+KEEP_DEFAULT_VALUE_FROM_LITERAL = True
+KEEP_DEFAULT_CLASS_LEVEL = False
 SOURCE_TYPE_DEFAULT_KEEP = {	# Add new PROP_STRING_SOURCE types here
 	PROP_STRING_SOURCE_VALUE_FROM_LITERAL: True,
 	PROP_STRING_SOURCE_VALUE_FROM_FIELD: False,
@@ -91,37 +92,49 @@ class PlotStyle:
 		def _dump_to_dict(handle: dict, dump_to: dict = {}, read_from: dict ={}):
 			def _fetch_value(key: str, prop: dict):
 				if not PROP_STRING_SOURCE in prop.keys(): raise SourceFieldMissing
-				if prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_LITERAL: return prop[PROP_STRING_VALUE]
-				elif prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_FIELD: return (dump_to | read_from)[prop[PROP_STRING_VALUE]]
+				if prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_LITERAL: return (key,prop[PROP_STRING_VALUE])
+				elif prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_FIELD: 
+					_assess_for_delete(prop[PROP_STRING_VALUE], prop, is_referenced=True)
+					return (prop[PROP_STRING_VALUE],(dump_to | read_from)[prop[PROP_STRING_VALUE]])
 				else: raise InvalidSourceType
 			def _parse_prop(key: str, prop: dict):
 				try:
 					validator = VALIDATORS.get(prop[PROP_STRING_VALIDATION])
 					if not validator: raise UnkownValidator(UNKNOWN_VALIDATOR_MSG.format(validator=prop[PROP_STRING_VALIDATION], key=key))
-					return validator.parse(_fetch_value(key, prop), **{
+					return validator.parse(_fetch_value(key, prop)[1], **{
 						CONTEXT_FIELD_PARSER_FUNC: lambda handle: _dump_to_dict(handle, dump_to={}, read_from=dump_to)
 						})
 				except Exception as e:
 					raise ParseError(PARSE_ERROR_MSG.format(key=key, validator=prop[PROP_STRING_VALIDATION], error=e))
 			def _register_localizable(key: str, prop: dict):
 				if PROP_STRING_LOCALIZABLE in prop.keys() and prop[PROP_STRING_LOCALIZABLE]:
-					self.__localization__[key] = _fetch_value(key,prop)
+					self.__localization__[key] = _fetch_value(key,prop)[1]
 			def _register_affixable(key: str, prop: dict, affix_type: str):
 				if affix_type in prop and prop[affix_type] != {}:
 					new_key = AFFIX_KEY_FORMAT.format(key=key, affix=affix_type)
 					self.__affix__.update({new_key: _parse_prop(key, prop[affix_type])})
 					_register_localizable(new_key, prop[affix_type])				
-			def _mark_for_delete(key: str, prop: dict):
-				def _mark():
-					if prop[PROP_STRING_VALUE] not in self.__marked_for_delete__: self.__marked_for_delete__.append(prop[PROP_STRING_VALUE])
-				if PROP_STRING_KEEP in prop: keep = VALIDATORS[PROP_STRING_VALIDATION_BOOL].sanitize(prop[PROP_STRING_KEEP])
-				else: keep = SOURCE_TYPE_DEFAULT_KEEP.get(prop.get(PROP_STRING_SOURCE), False)
-				if not keep: _mark()
+			def _assess_for_delete(key: str, prop: dict, is_referenced: bool = False):
+				def _mark(key, prop):
+					if key not in self.__marked_for_delete__: self.__marked_for_delete__.append(key)
+				is_keep_specified = PROP_STRING_KEEP in prop
+				try: is_fetched_keep_positive = VALIDATORS[PROP_STRING_VALIDATION_BOOL].sanitize(prop[PROP_STRING_KEEP])
+				except: is_fetched_keep_positive = False
+
+				match prop[PROP_STRING_SOURCE]:
+					case plotstyle.PROP_STRING_SOURCE_VALUE_FROM_LITERAL:
+						is_inferred_keep_positive = SOURCE_TYPE_DEFAULT_KEEP[PROP_STRING_SOURCE_VALUE_FROM_LITERAL]
+					case plotstyle.PROP_STRING_SOURCE_VALUE_FROM_FIELD:
+						is_inferred_keep_positive = is_referenced and not SOURCE_TYPE_DEFAULT_KEEP[PROP_STRING_SOURCE_VALUE_FROM_LITERAL]
+					case _:
+						is_inferred_keep_positive = KEEP_DEFAULT_CLASS_LEVEL
+				keep = 	is_keep_specified and is_fetched_keep_positive or not is_keep_specified and is_inferred_keep_positive
+				if not keep: _mark(key, prop)
 
 			for key, prop, in handle.items():				
 				if prop[PROP_STRING_VALIDATION] == PROP_STRING_VALIDATION_YAML:  # Treat recursive yaml parsing separately
 					try:
-						path = _fetch_value(key, prop)	# First call self.resolve_yaml_path, then validate
+						path = _fetch_value(key, prop)[1]	# First call self.resolve_yaml_path, then validate
 						self.__file_stack__.append(path)							# for debugging
 						path = self._resolve_yaml_path(path)
 						dump_to.update(_dump_to_dict(_load_yaml(VALIDATORS[PROP_STRING_VALIDATION_YAML].parse(path)), dump_to=dump_to))
@@ -144,7 +157,7 @@ class PlotStyle:
 						except Exception as e:
 							warnings.warn(IGNORE_FIELD_MSG.format(error=e, key=key+'.'+affix_type))
 							continue
-					_mark_for_delete(key, prop)
+					_assess_for_delete(key, prop)
 
 			return dump_to
 		return _dump_to_dict(_load_yaml(entry_file))
@@ -164,7 +177,7 @@ class PlotStyle:
 			if affix == PROP_STRING_SUFFIX: self.__params__.update({key: self.__params__[key] + value})
 			elif affix == PROP_STRING_PREFIX: self.__params__.update({key: value + self.__params__[key]})
 			else: raise ValueError(f"Unknown affix type for key {key}")
-	def __init__(self, *, yaml_file: str=None, yaml_list: list=None, master=None, language: str = LOCALIZATION_ENGLISH, configs_folder: str='plotstyle_configs', base_folder: str='', keep_all_fields: bool = False):
+	def __init__(self, *, yaml_file: str=None, yaml_list: list=None, master=None, language: str = LOCALIZATION_ENGLISH, configs_folder: str='plotstyle_configs', base_folder: str='', keep_all_fields: bool = KEEP_DEFAULT_CLASS_LEVEL):
 		if not VALIDATORS[PROP_STRING_VALIDATION_PATHSTR].validate(configs_folder): 
 			raise TypeError("configs_folder is an invalid folder name.")
 		self.CONFIGS_FOLDER = configs_folder
@@ -175,6 +188,7 @@ class PlotStyle:
 		self.__field_validation__ = {}
 		self.__localization__ = {}
 		self.__affix__ = {}
+		self.__referenced_fields__ = []
 		self.__marked_for_delete__ = []
 		# Reporting variables for debugging purposes
 		self.__file_stack__ = []

@@ -310,8 +310,16 @@ class GridoptionsValidator(Validator):
 				return False
 		return True
 	def parse(self, value: Any, **context) -> list[dict]:
-		if not self.validate(value, **context): raise ValueError("Invalid gridoptions structure")
-		return value
+		if not self.validate(value, **context):
+			raise ValueError("Invalid gridoptions structure")
+		field_parser = context["field_parser"]
+		parsed_list = []
+		for item in value:
+			parsed_dict = {}
+			for subkey, subprop in item.items():
+				parsed_dict.update({subkey: field_parser({subkey: subprop})})
+			parsed_list.append(parsed_dict)
+		return parsed_list
 	def sanitize(self, value, **context) -> list:
 		if not self.validate(value, **context): return []
 		return value

@@ -9,6 +9,27 @@ from math import floor
 from ddslib import *
 import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
+from measure_utils import report_output, NOPLOT
+
+# Plot flags
+PLOT_DATASET = 1<<0
+PLOT_CLIPPED_DATASET = 1<<1
+PLOT_M2_PARTIAL_PREDICTION = 1<<2
+PLOT_M3_PARTIAL_PREDICTION = 1<<3
+PLOT_M2_TRAINING_HISTORY = 1<<4
+PLOT_M3_TRAINING_HISTORY = 1<<5 # Not implemented
+PLOT_COMPOSITE_PREDICTION = 1<<6
+
+PLOT_FLAGS = 0 if NOPLOT else (	# Comment and uncomment to disable/enable plots
+# PLOT_DATASET |
+# PLOT_CLIPPED_DATASET | 
+# PLOT_M2_TRAINING_HISTORY | 
+# PLOT_M2_PARTIAL_PREDICTION | 
+# PLOT_M3_TRAINING_HISTORY | 
+# PLOT_M3_PARTIAL_PREDICTION | 
+PLOT_COMPOSITE_PREDICTION | 
+0 )
+
 #%% Resolve telemetry variable
 import tellib
 def resolvetel():
@@ -321,7 +342,7 @@ def HighCPUDetect(df, margin=0,threshold=0.8):
 	return ChangePoints, Segments
 bkpts, segments = HighCPUDetect(df, margin = 5,threshold=0.8)
 #%% Dataset plots
-if plotdataset:=True: dsplotter.plot(df,segments, plot_only_raw_cpu=True,
+if plotdataset:=bool(PLOT_FLAGS & PLOT_DATASET): dsplotter.plot(df,segments, plot_only_raw_cpu=True,
 				savefig_options=PlotStyle.compose_savefig_options(
 					fname=PS.full_dataset_filename, 
 					format=PS.save_figure_extension, 
@@ -352,7 +373,7 @@ if plotdataset: dsplotter.plot(df,segments=segments,show_segment=segments[1],mar
 
 idx = segments[1]['pos_low']
 df=df[range(len(df))<idx]			# clip dataset before temperature peak
-if plot_clipped_dataset := False : dsplotter.plot(df,plot_only_cpu_feature=True,
+if plot_clipped_dataset := bool(PLOT_FLAGS & PLOT_CLIPPED_DATASET) : dsplotter.plot(df,plot_only_cpu_feature=True,
 				savefig_options=PlotStyle.compose_savefig_options(
 					fname=PS.clipped_dataset_filename, 
 					format=PS.save_figure_extension, 
@@ -378,21 +399,21 @@ df2=df[['T_CPU','CPU']].copy(deep=True)
 from ddslib import M2, M2Kernel, M2Optimizer, M3, get_plotstyle
 m2obj=M2(
 	M2Kernel(lambda cpu: cpu**2, lambda temp_current, temp_ext: temp_current-temp_ext, TempAmb=calc_temp_amp(df2), Dt=(df2.index[-1]-df2.index[0])/len(df2),
-		param_space=M2Kernel.ParamSpace(KCPU=(1e-5,10), KTemp=(1e-5,1), TauCPU=(1e-9,2), TauTemp=(1e-9,2)),
+		param_space=M2Kernel.ParamSpace(KCPU=(8e-2,8), KTemp=(1e-3,0.01), TauCPU=(8e-2,8), TauTemp=(1e-1,10)),
 		# params=M2Kernel.Params(KCPU=0.8955001304094646, KTemp=0.0008084840447585498, TauCPU=0.7114574813747837, TauTemp=0.4034388338443532),		# RMSE = 1.249
 		# params=M2Kernel.Params(KCPU=0.7994835811720532, KTemp=0.0012296959998389521, TauCPU=0.814607170204983, TauTemp=0.9513807657573216),		# RMSE = 1.398
 		# params=M2Kernel.Params(KCPU=0.9661344533627875, KTemp=0.0016280793961810907, TauCPU=0.8349590176487286, TauTemp=0.9907842974965935),		# RMSE = 1.171
-		params=M2Kernel.Params(KCPU=1.9967875200537128, KTemp=0.001738236948110962, TauCPU=1.7285830177591441, TauTemp=1.0368206944316354), 		# RMSE = 1.104
+		# params=M2Kernel.Params(KCPU=1.9967875200537128, KTemp=0.001738236948110962, TauCPU=1.7285830177591441, TauTemp=1.0368206944316354), 		# RMSE = 1.104
 	),
-	M2Optimizer(training_duration=timedelta(seconds=1), composition='any', 
+	M2Optimizer(training_duration=timedelta(hours=1), composition='any', 
 		training_stop_flags = M2Optimizer.StopConditions.GLOBAL_MIN_LOSS 
 							| M2Optimizer.StopConditions.GLOBAL_MAX_DURATION
 				),
 	plotstyle=PS
-)
+)	
 m2target_col = 'T_CPU'
-m2obj.fit(df2['CPU'].to_frame(), df2[m2target_col], plot=(plot:=True))
-m2pred = m2obj.predict(df2['CPU'].to_frame(), 		plot= plot, against = df2[m2target_col])
+m2obj.fit(df2['CPU'].to_frame(), df2[m2target_col], plot= bool(PLOT_FLAGS & PLOT_M2_TRAINING_HISTORY))
+m2pred = m2obj.predict(df2['CPU'].to_frame(), 		plot= bool(PLOT_FLAGS & PLOT_M2_PARTIAL_PREDICTION), against = df2[m2target_col])
 
 m3_source_col = m2target_col
 df3=df.loc[:,df.columns != m3_source_col].copy(deep=True)
@@ -400,11 +421,11 @@ target_col = 'Temp_residue'
 df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
 
 m3obj=M3(n_estimators=1000, plotstyle=PS)
-m3obj.fit(plot = False,
+m3obj.fit(plot = bool(PLOT_FLAGS & PLOT_M3_TRAINING_HISTORY),
 	X = df3.loc[:,df3.columns != target_col],	
 	y = df3.loc[:,target_col],
 	)
-m3pred = m3obj.predict(plot = True,			against=df3[target_col],
+m3pred = m3obj.predict(plot = bool(PLOT_FLAGS & PLOT_M3_PARTIAL_PREDICTION),			against=df3[target_col],
 	X = df3.loc[:,df3.columns != target_col]
 	)
 
@@ -482,4 +503,6 @@ class CompositePredictionPlotter:
 		)
 		plt.show(block=True)
 predplotter=CompositePredictionPlotter(PS)
-if plotpred:=True: predplotter.plot(df2[m2target_col], m2pred+m3pred)
+if plotpred:=bool(PLOT_FLAGS & PLOT_COMPOSITE_PREDICTION): predplotter.plot(df2[m2target_col], m2pred+m3pred)
+
+if NOPLOT: report_output(root_mean_squared_error(df2[m2target_col],m2pred+m3pred))
