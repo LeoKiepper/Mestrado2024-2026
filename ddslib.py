@@ -22,6 +22,52 @@ import matplotlib; matplotlib.use('QtAgg')
 _STARTING_SCORE = float('-inf')
 SCORE_FUNCTION = root_mean_squared_error
 
+def compose_dataset_splitter(split_units, test_size, gap_size):
+	if split_units not in ['%','index','positions']:
+		raise ValueError("Unrecognized key for split_units. Must be either '%' for a percent (0 to 100) of the total length of dataset, 'index' for the same units used for values in the dataset's DataFrame.index, or 'positions' for basic integer indexation from 0 to len(dataset).")
+	if split_units == '%':
+		def split_dataset(X,y, n_splits):
+			TEST_SIZE = round(len(X) * test_size / 100.0)
+			GAP_SIZE = round(len(X) * gap_size / 100.0)
+			if n_splits > 1:
+				tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap=GAP_SIZE)
+				return tss.split(X,y)
+			else:
+				test_idx = range(len(X) - TEST_SIZE, len(X))
+				train_idx = range(len(X) - TEST_SIZE - GAP_SIZE)
+				return train_idx, test_idx
+	if split_units == 'positions':
+		def split_dataset(X,y, n_splits):
+			TEST_SIZE = test_size
+			GAP_SIZE = gap_size
+			if n_splits > 1:
+				tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap_size=GAP_SIZE)
+				return tss.split(X,y)
+			else:
+				test_idx = range(len(X) - TEST_SIZE, len(X))
+				train_idx = range(len(X) - TEST_SIZE - GAP_SIZE)
+				return train_idx, test_idx
+	if split_units == 'index':
+		def split_dataset(X,y, n_splits):
+			if not isinstance(X,pd.DataFrame):
+				raise TypeError("If split_units = 'positions', X must be a DataFrame")
+			t_end = X.index[-1]
+			t_test_start = t_end - test_size
+			t_gap_start = t_test_start - gap_size
+			pos_test_start = X.index.searchsorted(t_test_start, side='right')
+			pos_gap_start = X.index.searchsorted(t_gap_start, side='left')
+
+			TEST_SIZE = len(X)-pos_test_start
+			GAP_SIZE = pos_test_start-pos_gap_start
+			if n_splits > 1:
+				tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap_size=GAP_SIZE)
+				return tss.split(X,y)
+			else:
+				test_idx = range(pos_test_start, len(X))
+				train_idx = range(pos_test_start - pos_gap_start)
+				return train_idx, test_idx
+	return split_dataset
+
 @dataclass
 class PlotStyle:
 	"""
@@ -210,7 +256,7 @@ def is_valid_font(fontname):
 
 
 class FunctionWrapper(ABC):
-	_model: 'M1 | M2 | M3'		# type: ignore
+	_model: 'M1 | M2 | M3_XGBoost'		# type: ignore
 	def __init__(self):
 		"""
 		Instantiate a wrapper object to provide a common ground access to fields belonging to 
@@ -854,7 +900,68 @@ class M2Optimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			if hasattr(self, key): setattr(self, key, value)
 		return self
 
-class M3(ABC,BaseEstimator, RegressorMixin):
+class M3Strategy(ABC, BaseEstimator, RegressorMixin):
+	@abstractmethod
+	def prefit(self, X, y, **kwargs): pass
+	@abstractmethod
+	def fit(self, X, y, **kwargs): pass
+	@abstractmethod
+	def predict(self, X, **kwargs): pass
+	@abstractmethod
+	def get_params(self, deep=True): pass
+	@abstractmethod
+	def set_params(self, **params): pass
+	def __init__(self, **kwargs):
+		self.prefit_context: dict = {'from_xval': False}
+class XGBStrategy(M3Strategy):
+	def prefit(self, X, y, **kwargs):
+		train_idx = self.prefit_context.get('train_idx', None)
+		test_idx = self.prefit_context.get('test_idx', None)
+		X = self.prefit_context.get('X', [])
+		y = self.prefit_context.get('y', [])
+		if train_idx is None or test_idx is None:
+			raise ValueError("train_idx and test_idx cannot be None. XGBoost requires defining an eval_set.")
+		if len(X)==0 or len(y)==0:
+			raise ValueError("X and y cannot be empty.")
+		if len(X) != len(y):
+			raise ValueError("X and y must have the same length.")
+		if not isinstance(X, (pd.DataFrame, pd.Series)):
+			X_train, X_test  = X[train_idx], X[test_idx]
+		else:
+			X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+		if not isinstance(y, (pd.DataFrame, pd.Series)):
+			y_train, y_test = y[train_idx], y[test_idx]
+		else:
+			y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+		return {
+			'eval_set':	[(X_train, y_train), (X_test, y_test)],
+			}
+	def fit(self, X, y, **kwargs):
+		eval_set = kwargs.get('eval_set', None)
+		if eval_set is None: raise ValueError("eval_set cannot be None. XGBoost requires defining an eval_set.")
+		verbose = bool(kwargs.get('verbose', False))
+		self.reg.fit(X, y, eval_set=eval_set, verbose=verbose)
+		return self
+	def predict(self, X, **kwargs):
+		return self.reg.predict(X, **kwargs)
+
+	def __init__(self, n_estimators=1000, early_stopping_rounds=20, learning_rate=0.001, **kwargs):
+		super().__init__(**kwargs)
+		self.n_estimators = n_estimators
+		self.early_stopping_rounds = early_stopping_rounds
+		self.learning_rate = learning_rate
+		self.reg = xgb.XGBRegressor(
+			n_estimators=self.n_estimators,
+			early_stopping_rounds=self.early_stopping_rounds,
+			learning_rate=self.learning_rate,
+			**kwargs
+		)
+	def get_params(self, deep=True):
+		return self.reg.get_params(deep=deep)
+	def set_params(self, **params):
+		self.reg.set_params(**params)
+		return self
+class M3(BaseEstimator, RegressorMixin):
 	class Plotter:
 		def plot_crossvalidation(self, y_tests, y_preds, scores, fold_indices):
 			def sanitize_plotstyle(ps: PlotStyle) -> PlotStyle:
@@ -940,7 +1047,7 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 			"""
 			Plot predictions vs reference for a single fit (full dataset).
 			"""
-			if len(y_true) != len(y_pred):
+			if y_true is not None and len(y_true) != len(y_pred):
 				warnings.warn("y_true and y_pred must have the same length.")
 				return
 			def sanitize_plotstyle(ps: PlotStyle) -> PlotStyle:
@@ -983,7 +1090,7 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 			fig, ax = plt.subplots(1, figsize=PS.single_figsize)
 			if isinstance(y_true, pd.Series): x = y_true.index
 			else: x = range(len(y_true))
-			ax.plot(x, y_true, **PS.reference_plot_options)		# Reference line
+			if y_true is not None: ax.plot(x, y_true, **PS.reference_plot_options)		# Reference line
 			ax.plot(x, y_pred, **PS.prediction_plot_options)	# Prediction line
 			ax.set_facecolor(PS.facecolor)
 			for grid_option in PS.grid_options: ax.grid(**grid_option)
@@ -1014,52 +1121,25 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 
 		def __init__(self, plotstyle: PlotStyle = None):
 			self.plotstyle = plotstyle
-	def _compose_dataset_splitter(self, split_units, test_size, gap_size):
-		if split_units not in ['%','index','positions']:
-			raise ValueError("Unrecognized key for split_units. Must be either '%' for a percent (0 to 100) of the total length of dataset, 'index' for the same units used for values in the dataset's DataFrame.index, or 'positions' for basic integer indexation from 0 to len(dataset).")
-		if split_units == '%':
-			def split_dataset(X,y, n_splits):
-				TEST_SIZE = round(len(X) * test_size / 100.0)
-				GAP_SIZE = round(len(X) * gap_size / 100.0)
-				if n_splits > 1:
-					tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap=GAP_SIZE)
-					return tss.split(X,y)
-				else:
-					test_idx = range(len(X) - TEST_SIZE, len(X))
-					train_idx = range(len(X) - TEST_SIZE - GAP_SIZE)
-					return train_idx, test_idx
-		if split_units == 'positions':
-			def split_dataset(X,y, n_splits):
-				TEST_SIZE = test_size
-				GAP_SIZE = gap_size
-				if n_splits > 1:
-					tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap_size=GAP_SIZE)
-					return tss.split(X,y)
-				else:
-					test_idx = range(len(X) - TEST_SIZE, len(X))
-					train_idx = range(len(X) - TEST_SIZE - GAP_SIZE)
-					return train_idx, test_idx
-		if split_units == 'index':
-			def split_dataset(X,y, n_splits):
-				if not isinstance(X,pd.DataFrame):
-					raise TypeError("If split_units = 'positions', X must be a DataFrame")
-				t_end = X.index[-1]
-				t_test_start = t_end - test_size
-				t_gap_start = t_test_start - gap_size
-				pos_test_start = X.index.searchsorted(t_test_start, side='right')
-				pos_gap_start = X.index.searchsorted(t_gap_start, side='left')
 
-				TEST_SIZE = len(X)-pos_test_start
-				GAP_SIZE = pos_test_start-pos_gap_start
-				if n_splits > 1:
-					tss = TimeSeriesSplit(n_splits=n_splits, test_size=TEST_SIZE, gap_size=GAP_SIZE)
-					return tss.split(X,y)
-				else:
-					test_idx = range(pos_test_start, len(X))
-					train_idx = range(pos_test_start - pos_gap_start)
-					return train_idx, test_idx
-		return split_dataset
-	def cross_validation(self, X, y, plot=True, n_splits = 5, split_units = '%', test_size = 20, gap_size = 10):
+	def fit(self, X, y, plot=True, split_units='%', test_size=20, gap_size=0, **kwargs):
+		# Plotting functionality is still not implemented
+		if not self.strategy.prefit_context['from_xval']:
+			train_idx, test_idx = compose_dataset_splitter(split_units,test_size,gap_size)(X, y, 1)
+			self.strategy.prefit_context.update({
+				'train_idx': train_idx,
+				'test_idx': test_idx,
+				'X': X,
+				'y': y,
+				})
+		prefit_dict = self.strategy.prefit(X, y, **kwargs)
+		self.strategy.fit(X, y, **(kwargs|prefit_dict))
+		return self
+	def predict(self, X, plot=True, against=None, **kwargs):
+		y_pred = self.strategy.predict(X, **kwargs)
+		if plot: self.plotter.plot_prediction(against, y_pred)
+		return y_pred
+	def cross_validation(self, X, y, plot=True, n_splits = 5, split_units = '%', test_size = 20, gap_size = 0, **kwargs):
 		"""
 		Perform cross-validation on the dataset using TimeSeriesSplit.
 		:param X: Input features.
@@ -1074,68 +1154,41 @@ class M3(ABC,BaseEstimator, RegressorMixin):
 
 		X, y = check_X_y(X, y)
 		y = y.ravel()
-		y_tests, y_preds, scores, test_idx = [], [], [], []
-		for train_idx_fold, test_idx_fold in self._compose_dataset_splitter(split_units,test_size,gap_size)(X, y, n_splits):
-			X_train, y_train = X[train_idx_fold], y[train_idx_fold]
-			X_test, y_test = X[test_idx_fold], y[test_idx_fold]
-			self.reg.fit(X_train, y_train, 
-				eval_set=[(X_train, y_train), (X_test, y_test)],
-				verbose=False)
-			pred = self.reg.predict(X_test)
-			score = root_mean_squared_error(pred, y_test)
+		y_tests, y_preds, scores, test_pos = [], [], [], []
+		self.strategy.prefit_context.update({
+			'from_xval': True,
+			'X': X,
+			'y': y,
+			})
+		for train_idx, test_idx in compose_dataset_splitter(split_units,test_size,gap_size)(X, y, n_splits):
+			self.strategy.prefit_context.update({
+				'train_idx': train_idx,
+				'test_idx': test_idx,
+				})
+			X_train, y_train = X[train_idx], y[train_idx]
+			X_test, y_test = X[test_idx], y[test_idx]
+			self.fit(X_train, y_train, plot=False, **kwargs)
+			pred = self.predict(X_test, plot=False)
+			score = SCORE_FUNCTION(pred, y_test)
 			y_tests.append(y_test)
 			y_preds.append(pred)
 			scores.append(score)
-			test_idx.append(test_idx_fold)
+			test_pos.append(test_idx)
+		self.strategy.prefit_context.update({
+			'from_xval': False,
+			})
 		if plot:
 			self.plotter.plot_crossvalidation(y_tests, y_preds, scores, list(range(n_splits)))
 		return test_idx, y_preds, scores
-	def fit(self, X, y, plot=True, split_units = '%', test_size = 20, gap_size = 10):
-		train_idx, test_idx = self._compose_dataset_splitter(split_units,test_size,gap_size)(X, y, 1)
-		if not isinstance(X, (pd.DataFrame, pd.Series)):
-			X_train, X_test  = X[train_idx], X[test_idx]
-		else:
-			X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
-		if not isinstance(y, (pd.DataFrame, pd.Series)):
-			y_train, y_test = y[train_idx], y[test_idx]
-		else:
-			y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
-		X, y = check_X_y(X, y)
-		y = y.ravel()
-		self.reg.fit(X_train, y_train, 
-			eval_set=[(X_train, y_train), (X_test, y_test)],
-			verbose=False)
-		return self	
-	def predict(self, X, plot = True, against = []):
-		pred = self.reg.predict(X)
-		if plot: self.plotter.plot_prediction(against, pred)
-		return pred
 
-	def __init__(self, n_estimators=1000, early_stopping_rounds=20, learning_rate=0.001, plotstyle: PlotStyle = None):
-		self.n_estimators = n_estimators
-		self.early_stopping_rounds = early_stopping_rounds
-		self.learning_rate = learning_rate
-
-
-
-		self.reg = xgb.XGBRegressor(
-			n_estimators = self.n_estimators,						
-			early_stopping_rounds = self.early_stopping_rounds,	
-			learning_rate = self.learning_rate
-			)
+	def __init__(self, strategy: M3Strategy, plotstyle=None):
+		self.strategy: M3Strategy = strategy
 		self.plotter = self.Plotter(plotstyle=plotstyle)
 	def get_params(self, deep=True):
-		params = {
-			'random_state': self.random_state,
-		}
-		return params
+		return self.strategy.get_params(deep=deep)
 	def set_params(self, **params):
+		self.strategy.set_params(**params)
 		return self
-
-
-
-
-
 
 
 if __name__ == "__main__":
@@ -1490,7 +1543,10 @@ if __name__ == "__main__":
 	target_col = 'Temp_residue'
 	df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
 
-	m3obj=M3(plotstyle=get_plotstyle('IEEE2025'))
+	m3obj = M3(
+		XGBStrategy(n_estimators=1000, early_stopping_rounds=20, learning_rate=0.001),
+		plotstyle=get_plotstyle('IEEE2025')
+	)
 	m3obj.cross_validation(plot = 	(PP := True),
 		X = df3.loc[:,df3.columns != target_col],	
 		y = df3.loc[:,target_col],					
