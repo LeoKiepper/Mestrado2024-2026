@@ -503,513 +503,113 @@ def apply_slice(iter, *slicer, along_dim: int=0, return_format: str='2d', flat_o
 		else:  # "col", "colum-major"
 			return [result[r][c] for c in range(len(result[0])) for r in range(len(result))]
 class Param:
-	from numbers import Number
-	import weakref
-	from collections import Counter
-	_domains = weakref.WeakKeyDictionary()
-	_behaviors = weakref.WeakKeyDictionary()
-	_derive_inputs = weakref.WeakKeyDictionary()
-	_derive_fn = weakref.WeakKeyDictionary()
-	_types = weakref.WeakKeyDictionary()
-
 	@property
-	def domain(self) -> 'Param.Domain': return Param._domains.get(self)
-	@property
-	def behaviors(self) -> dict: return Param._behaviors.get(self)
-	@behaviors.setter
-	def behaviors(self, val: dict): Param._behaviors[self] = val
-	@property
-	def types(self) -> dict: return Param._types.get(self)
-	@types.setter
-	def types(self, val: dict): Param._types[self] = val
-	@property
-	def derive_inputs(self) -> list: return Param._derive_inputs.get(self)
-	@derive_inputs.setter
-	def derive_inputs(self, val: list): Param._derive_inputs[self] = val
-	@property
-	def derive_fn(self) -> callable: return Param._derive_fn.get(self)
-	@derive_fn.setter
-	def derive_fn(self, val: callable): Param._derive_fn[self] = val
-
-	def _validate(self, params: dict, partial=False, reject_derived=False):
-		"""
-		Validate a mapping of parameter values against this Param instance.
-
-		:param values:
-			Dictionary mapping parameter names to candidate values. When the
-			constructor was called with a names-list, these names come from that list.
-		:param partial:
-			If True, allow a subset of parameters (useful for updates/guesses).
-		:param reject_derived:
-			If True, raise if any provided names are flagged as derived.
-
-		:raises TypeError:
-			If ``values`` is not a dict.
-		:raises AssertionError:
-			On unrecognized parameter names, derived-parameter violations, or type mismatches.
-		"""
+	def domain(self): return _param_domain_map.get(self)
+	def validate(self, params: dict):
+		assert isinstance(params, dict), 'params must be a dict.'
 		names = set(self.names())
-		# prescribed = {n for n, v in self.behaviors.items() if v == self.Consts.FLAG_PRESCRIBED}
-		derived = self.names(self.Utils.FLAG_DERIVED)
-
-		input_names = set(params.keys())
-		if reject_derived: assert input_names.isdisjoint(derived), f'Derived parameters not allowed here: {input_names & derived}'
-		if partial: assert input_names.issubset(names), f'Unrecognized parameters: {input_names - names}'
-		else: assert input_names ^ names == set(), f'Unrecognized parameters: {input_names ^ names}'
-
-		if (bad := [k for k, v in params.items() if not Param.Utils.is_numeric(v)]) != []: raise TypeError(f"Non-numeric parameters: {bad}")
-	def names(self, flag=None):
-		"""
-		Return parameter names known to this Param instance, optionally filtered by behavior.
-
-		:param flag:
-			One of ``None`` (return all names), ``Param.Consts.FLAG_PRESCRIBED``, or
-			``Param.Consts.FLAG_DERIVED`` to return only those names with the given behavior.
-
-		:return:
-			A list of parameter names (strings).
-
-		:notes:
-			Used throughout the class to centralize the "masking" logic for prescribed vs derived names.
-		"""
-		names = [k for k in self.__dict__.keys() if not k.startswith('_')]
-		if flag in (self.Utils.FLAG_DERIVED, self.Utils.FLAG_PRESCRIBED):
-			names = [n for n in names if self.behaviors.get(n) == flag]
-		return names
-	def to_dict(self, flag=None): 
-		"""
-		Return parameter name→value mapping, optionally limited to a behavior flag.
-
-		:param flag:
-			See :meth:`names` for accepted values.
-
-		:return:
-			A shallow copy of the dict mapping parameter name -> current value for the selected names, as specified by **flag**.
-		"""
-		return {name: getattr(self, name) for name in self.names(flag)}.copy()
-	def to_list(self, flag=None): 
-		"""
-		Same as :meth:`to_dict`, but returns a list of values.
-
-		:param flag:
-			See :meth:`names` for accepted values.
-
-		:return:
-			List of parameter values corresponding to the selected names, as specified by **flag**.
-		"""		
-		return [getattr(self, name) for name in self.names(flag)]
-	def update(self, params, restrict=True, derive = True, hold_types=True):	
-		"""
-		Update one or more prescribed parameters onto instance parameters, run domain restriction and re-derive.
-
-		:param params:
-			Dict with the parameter names and new values. Derived parameters are rejected.
-
-		:raises AssertionError:
-			If provided keys are unknown or violate derived/prescribed rules or types.
-		"""
-		new_types = {name: type(value) for name, value in params.items()}
-		self._validate(params, partial=True, reject_derived=True)
-		for name, value in params.items(): setattr(self, name, value)
-		if not hold_types: self.types.update(new_types)
-		if restrict: self.domain.restrict()
-		if derive: self._derive()
-		return self
-	def guess(self, names: list | None = None, derive = True, inplace = True):
-		"""
-		Assign guessed values to prescribed parameters using the active domain's guesser.
-
-		:param names:
-			Optional list of parameter names to guess. If None, all prescribed parameters are guessed.
-			When provided, only names that are prescribed and recognized are used.
-
-		:raises AssertionError:
-			If the domain is not bound, or if ``names`` contains unknown entries.
-		:post:
-			After successful call, ``self._derive()`` is invoked so derived parameters remain consistent.
-		"""
-		assert self.domain is not None, 'Domain not bound to parent.'
-		if names is None:
-			names = self.names(self.Utils.FLAG_PRESCRIBED)
-		else:
-			if not isinstance(names, list): raise TypeError('names is not a list')
-			if any(not isinstance(n, str) for n in names): raise TypeError('names contain non-str entries')
-			names = [n for n in names if n in self.names(self.Utils.FLAG_PRESCRIBED)]
-
-		limits = self.domain.limits
-		new = {n: self.domain._guesser(*limits[n]) for n in names}
-		self._validate(new, partial=True, reject_derived=True)
-		if inplace:
-			for n, v in new.items(): setattr(self, n, v)
-
-		derive_out = {}
-		if derive: derive_out = self._derive(new,inplace)
-
-		if inplace: return self
-		else: return new | derive_out
-	def _derive(self, new={}, inplace=True):
-		"""
-		Run the configured derive function to compute derived parameters.
-
-		Behavior:
-			Attempts three call styles in order: ``derive_fn(**kwargs)``, ``derive_fn(*args)``,
-			and finally ``derive_fn(self)``. The derive function must return a dict mapping
-			derived parameter names to values.
-
-		:raises AssertionError:
-			If the derive result is not a dict, contains unknown names, or returns values
-			for parameters not flagged as derived.
-		"""
-		if inplace: input_kwargs = {n: new.get(n, getattr(self, n)) for n in self.derive_inputs}
-		else: input_kwargs = {n: getattr(self, n) for n in self.derive_inputs}
-		
-		out = self.derive_fn(**input_kwargs)
-
-		if inplace: 
-			for k, v in out.items(): setattr(self, k, v)
-		return out
-
-	def __init__(self, params: dict|list, domain: 'Param.Domain' = None, derive_fn=None, derive_inputs=None, behaviors: dict|None=None, types: dict|None=None, derive_after_init: bool = False):
-		"""
-		Construct a Param object encapsulating Numeric-valued parameters.
-
-		Two construction forms are supported:
-
-		1. ``params`` is a **dict**: caller provides explicit initial values for each parameter.
-		In this mode ``domain.limits``, ``domain.restricts`` and ``behaviors`` must
-		be dicts whose keys are a subset of (or equal to) the parameter names.
-
-		2. ``params`` is a **list** of names: caller provides parameter names only and the
-		Domain must be provided with ``limits``/``restricts`` as lists (parallel to the
-		prescribed subset of names). In this mode initial parameter values are drawn by
-		calling the domain guesser for each prescribed name and all auxiliary structures
-		are normalized to dicts internally, as though instantiation followed form 1.
-
-		:param params:
-			Dict mapping name->value or list of parameter names.
-		:param domain:
-			A Param.Domain instance describing limits/restrictions and providing a guesser.
-		:param derive_fn:
-			Optional callable used to compute derived parameters. See :meth:`_derive`.
-		:param derive_inputs:
-			Optional list of parameter names (subset of params) used as inputs to ``derive_fn``.
-
-				- In Param instantiation form 1, domain.limits must be a dict of {str:tuple(Numeric,Numeric)}, with all keys flagged as 'prescribed'
-				- In Param instantiation form 2, domain.limits must be a list of [tuple(Numeric,Numeric)], with all keys flagged as 'prescribed'
-		:param behaviors:
-			Optional mapping name -> ``FLAG_PRESCRIBED``|``FLAG_DERIVED``. When omitted, all
-			parameters are treated as prescribed.
-
-		:raises TypeError:
-			If ``params`` has an unexpected type.
-		:raises AssertionError:
-			If provided dict/list shapes or behavior mappings are inconsistent with names.
-		:post:
-			After construction, internal maps (domain.limits, restricts, behaviors)
-			are consistent dicts keyed by parameter name and the domain is bound to this Param.
-		"""
-
-		# Resolve params as instance attributes. If params is a list, no starting values are passed. Defer value generation for later.
-		if isinstance(params, dict):
-			params_was_passed_as_list = False
-			names = params.keys()
-		elif isinstance(params, list):
-			params_was_passed_as_list = True
-			names = params
-			params = {name: None for name in names}
-		else: raise TypeError('params is not a dict or list.')
-		if any(not isinstance(name, str) for name in names): raise TypeError('params contains non-string names.')
-		for name, val in params.items(): setattr(self, name, val)		# from this point self.names() will return correctly when no flags are passed
-
-
-		# Resolve behaviors
-		DEFAULT_BEHAVIORS = {name:self.Utils.FLAG_PRESCRIBED for name in names}
-		if behaviors is None: behaviors = DEFAULT_BEHAVIORS
-		else:
-			if not isinstance(behaviors, dict): raise TypeError('When informed, behaviors must be a dict')
-			assert (unrec := set(behaviors.keys()) - set(names))==set(), f"behaviors contains keys not present in names: {unrec}" 
-			supported = (self.Utils.FLAG_PRESCRIBED,self.Utils.FLAG_DERIVED)
-			if any(unsupported := set([v for v in behaviors.values() if v not in supported])):
-				raise ValueError(f"Unsupported flag found in behaviors.values: {unsupported}")
-			behaviors = DEFAULT_BEHAVIORS | behaviors
-		Param._behaviors[self] = behaviors					# from this point self.names() is able to apply flags to filter names
-
-		if domain is None: domain = Param.Domain(
-			limits={name:Param.Utils.UNDETERMINED_LIMIT for name in names}, 
-			restricts={name:Param.Utils.IDENTITY_RESTRICT for name in names})
-		domain._delayed_domain_init_routines(self)
-
-
-		# Resolve derive_inputs
-		if derive_inputs is None: derive_inputs = []
-		else:
-			if not isinstance(derive_inputs, list): raise TypeError('derive_inputs must be a list')
-			if any(not isinstance(n, str) for n in derive_inputs): raise TypeError('derive_inputs contains non-str entries')
-			dup = [x for x in derive_inputs if derive_inputs.count(x) > 1]
-			assert dup == [], f'Found duplicated derive_inputs: {dup}'
-			assert (diff := set(derive_inputs) - set(self.names()))==set(), f"derive_inputs contains entries not present in names: {diff}"
-		Param._derive_inputs[self] = derive_inputs
-
-
-		# Dry run to validate derive_fn signature
-		if derive_fn is None: derive_fn = lambda **kwargs: {}
-		else:
-			test_kwargs = {name: value for name, value in self.guess(inplace=False,derive=False).items()}
-			out = derive_fn(**test_kwargs)
-			assert isinstance(out, dict), "derive_fn must return dict"
-			assert (unrec := set(out.keys()) - set(self.names())) == set(), f"derive_fn returned unrecognized names: {unrec}"
-			derived_set = self.names(self.Utils.FLAG_DERIVED)
-			assert (der := set(out.keys())-set(derived_set))==set(), f"derive_fn returned values for names not marked as derived: {der}"
-		Param._derive_fn[self] = derive_fn
-		
-		# Resolve initial types
-		if types is None:
-			# domain constructor validates _guesser signature, no need to check.
-			guesser_type = type(domain._guesser(0,1))
-			if params_was_passed_as_list: types = {name: guesser_type for name in names}
-			else:
-				types = {}
-				for name in names:
-					if params[name] is not None: types[name] = type(params[name]); continue
-					if domain.limits[name] != self.Utils.UNDETERMINED_LIMIT: types[name] = type(domain.limits[name][0]); continue
-					types[name] = guesser_type
-		elif isinstance(types, type):
-			assert Param.Utils.is_numeric(types), "types informed as single type must be numeric"
-			types = {name: types for name in names}
-		else:
-			if not isinstance(types, dict): raise TypeError('When informed, types must be a dict or single type')
-			assert (unrec := set(types.keys()) - set(names))==set(), f"types contains keys not present in names: {unrec}" 
-			if (bad := [k for k, v in types.items() if not Param.Utils.is_numeric(v)])!=[]: raise TypeError(f"types contains non-numeric parameters: {bad}")
-		Param._types[self] = types
-
-
-		if params_was_passed_as_list: self.guess()
-		if derive_after_init: self._derive()
-	def __getitem__(self, key):
-		if isinstance(key, str): return getattr(self, key)
-		if isinstance(key, list): return {k: getattr(self, k) for k in key}
-		raise TypeError('key must be str or list[str]')
-	def __setitem__(self, key, value): self.update({key: value})
-	def __iter__(self): return iter(self.names())
-	def __len__(self): return len(self.__dict__)
-	def __or__(self, other):
-		if isinstance(other, dict): return self.__dict__ | other
-		elif isinstance(other, Param): 
-			new_values = self.__dict__.copy() | other.to_dict()
-			seen=set()
-			unique=[]
-			for x in self.derive_inputs+other.derive_inputs:
-				if x in seen and x in self.derive_inputs: continue
-				seen.add(x)
-				unique.append(x)
-			new_derive_inputs = unique
-			new_param_behaviors = self.behaviors | other.behaviors
-			def new_derive_fn(**kwargs):
-				out_1 = self.derive_fn(**{n: getattr(self, n) for n in self.derive_inputs})
-				out_2 = other.derive_fn(**{n: getattr(other, n) for n in other.derive_inputs})
-				return out_1 | out_2
-			new_domain = self.domain | other.domain
-			return Param(new_values, domain=new_domain, derive_fn=new_derive_fn, derive_inputs=new_derive_inputs, behaviors=new_param_behaviors)
-		else: raise TypeError(f'Unsupported operand type(s) for |: {type(other).__name__}. Only dict and Param are supported.')
-
-
-	class Utils:
-		FLAG_DERIVED = 'derived'
-		FLAG_PRESCRIBED = 'prescribed'
-		UNDETERMINED_LIMIT = (0,1)
-		IDENTITY_RESTRICT = lambda value, limits: value
-		def is_numeric(val):
-			from numbers import Number
-			return isinstance(val, Number) or (isinstance(val, type) and issubclass(val, Number))
+		assert (diff := set(params.keys()) ^ names) == set(), f'Unrecognized parameters for object of type {self.__class__.__name__}: {diff}'
+		def ok(name, value):
+			ref = getattr(self, name)
+			t1, t2 = type(ref), type(value)
+			if issubclass(t1, Number) and issubclass(t2, Number):
+				return True
+			return t1 == t2
+		assert all(ok(n, params[n]) for n in params), f'Type mismatch in parameters for object of type {self.__class__.__name__}'
+	def names(self): return [k for k in self.__dict__.keys() if not k.startswith('_')]
+	def to_dict(self): return {name: getattr(self, name) for name in self.names()}.copy()
+	def to_list(self): return [getattr(self, name) for name in self.names()]
+	def update(self, params):
+		self.validate(params)
+		for name in self.names(): setattr(self, name, params[name])
+	def __init__(self, params: dict|list, domain: 'Param.Domain'):
+		if isinstance(params,dict): 
+			assert all([isinstance(name, str) for name in params.keys()]), 'Aborting. params.keys() contains non-string entries.'
+		elif isinstance(params,list):
+			assert all(isinstance(name, str) for name in params), 'Aborting. params contains non-string entries.'
+			params = domain.guess(params)
+		else: raise TypeError('Aborting. params is not a dict or list.')
+		# TODO: check for valid attribute names
+		# TODO: check for numeric values in all attributes
+		for name, val in params.items(): setattr(self, name, val)
+		domain.set_parent(self)
 	@dataclass
 	class Domain:
-		import numpy as np
+		restrict_map: dict
 		_parent: 'Param'
 		_guesser: callable
 
 		def restrict(self):
-			"""
-			Apply domain-specific restriction functions to the parent Param's prescribed values.
-
-			Behavior:
-				For every key in ``self.limits``, obtains the parent's current value and passes it
-				and the corresponding limit tuple to the restrict function registered in
-				``self.restricts`` (or the identity function if none). The resulting values are
-				written back to the parent.
-
-			:raises TypeError:
-				If no parent has been set.
-			"""
-			if self._parent is None: return
-			new = {}
-			for name in self.limits.keys():
-				val = getattr(self._parent, name)
-				fn = self.restricts.get(name, Param.Utils.IDENTITY_RESTRICT)
-				new[name] = fn(val, self.limits[name])
-			for name, value in new.items(): setattr(self._parent, name, self._parent.types[name](value))
-
-		#region Clarification for Param.__init__, Domain.__init__, _delayed_init_routines responsibility split
-		# Param and Domain variables are resolved whenever it is first possible to do so in the
-		# callstack without thematic overreach. See docstrings for specific information.
-		# Construction callstack should look like (oldest first):
-		# 	Domain.__init__() ->
-		# 	Param.__init__() ->
-		# 		...
-		# 		_delayed_domain_init_routines()
-		# 		...
-		#endregion
-		def _delayed_domain_init_routines(self, parent: 'Param'):
-			"""
-			Provides logic thematically belonging to Domain for delayed execution, which would normally
-			belong in the constructor, but requires data that comes from a Param instance, created after
-			Domain instantiation. Calling this from within Param constructor completes paired instantiation
-			orchestration while neatly maintaining separation of concerns.
-			
-			Dependencies from Param constructor:
-				- Fully functioning `parent.names()`
-
-			Responsibilities:
-				- Resolve `self.limits` and `self.restricts` to dicts containing {*limits*, *restricts*} for all parent.names. For *names* not informed in *limits* during instantiation, generate (-inf, inf) *limits* and identity function *restricts*
-				- Assert coherence between (self.limits, self.restricts) and (parent.names, parent.behaviors) 
-
-
-			:param parent:
-				The Param instance to bind to.
-
-			:raises TypeError:
-				If ``parent`` is not a Param.
-			:raises AssertionError:
-				If list lengths or key sets do not match the parent's names / prescribed subset.
-			"""
-			if not isinstance(parent, Param): raise TypeError('parent is not Param.')
+			assert self._parent is not None, 'Aborting. Domain not bound to parent.'
+			p = self._parent
+			new = {n: self.restrict_map.get(n, (lambda v,d: v))(getattr(p, n), self.limits[n]) for n in p.names()}
+			p.update(new)
+		def set_parent(self, parent: 'Param'):
+			assert isinstance(parent, Param), 'Aborting. parent is not Param.'
 			names = parent.names()
-
-			# Coherence between (self.limits or self._limits_list) and (self.restric_map or self._restrict_list) is asserted on instantiation
-			# In both (self.limits, self._limits_list) and (self.restric_map, self._restrict_list), Domain constructor asserts that only one in each pair can be not None
-
-			# resolve determined_limits as dict from either self.limits or self._limits_list
-			determined_limits = {}
-			if self.limits is not None: determined_limits.update(self.limits)
-			elif self._limits_list is not None: determined_limits.update({n: t for n, t in zip(names, self._limits_list)})
-			for name in set(names) - set(determined_limits.keys()): determined_limits.update({name:Param.Utils.UNDETERMINED_LIMIT})
-			self.limits=determined_limits
-
-			# Assert coherence between self.limits and parent.param_behavior. Determined limits can only be specified for params flagged as prescribed
-			assert (failed := [n for n in parent.names(Param.Utils.FLAG_DERIVED) if self.limits[n] != Param.Utils.UNDETERMINED_LIMIT]) == [], \
-				f"limits contains keys not flagged as 'prescribed': {failed}. Do not specify limits for parameters flagged '{Param.Utils.FLAG_DERIVED}'."
-
-			# resolve determined_restricts as dict from either self.restricts or self._restrict_list
-			determined_restricts = {}
-			if self.restricts is not None: determined_restricts.update(self.restricts)
-			elif self._restrict_list is not None: determined_restricts.update({n: t for n, t in zip(names, self._restrict_list)})
-			for name in set(names) - set(determined_restricts.keys()): determined_restricts.update({name:Param.Utils.IDENTITY_RESTRICT})
-			self.restricts=determined_restricts
-
-			# Assert coherence between (self.limits, self.restricts) and parent.names
-			if self.limits is not None: assert (unrec := set(self.limits.keys()) - set(names))==set(), f"limits contains keys not present in parent.names: {unrec}" 
-			if self.restricts is not None: assert (unrec := set(self.restricts.keys()) - set(names))==set(), f"restricts contains keys not present in parent.names: {unrec}" 
-
-			self._parent = parent
-			Param._domains[parent] = self
-		def __init__(self, limits: dict[str, tuple]|list[tuple]|None=None, restricts: dict[str, callable]|list[callable]|None=None, guesser = np.random.uniform):
-			"""
-			Construct a Domain describing parameter limits, per-parameter restrictors and a guesser.
-			Arguments must agree with Param instantiation form (see :meth:`Param.__init__`)
-
-			:param limits:
-				Either a dict or a list:
-
-					- In Param instantiation form 1, must be a dict of `{ name: tuple(Numeric,Numeric) }`
-					- In Param instantiation form 2, domain.limits must be a list of `[ tuple(Numeric,Numeric) ]`. Matching with parameters is position-based
-
-				In either form, corresponding parameters must be flagged as ``FLAG_PRESCRIBED``
-			:param restricts:
-				Either a dict or a list:
-
-					- In Param instantiation form 1, must be a dict of `{ name: callable(value, domain_limits) }`
-					- In Param instantiation form 2, domain.limits must be a list of `[ callable(value, domain_limits) ]`. Matching with parameters is position-based
-
-				In either form, corresponding parameters must be flagged as ``FLAG_PRESCRIBED``
-			:param guesser:
-				Callable used to sample initial or guessed values; default uses ``np.random.uniform``. **limits** are passed to guesser after unpacking (i.e. val = guesser(*limits))
-
-			:raises AssertionError:
-				If provided limits or restricts entries do not have the expected shapes/signatures.
-			:post:
-				List-style inputs are preserved temporarily as ``_limits_list`` / ``_restrict_list``
-				and converted into dicts in :meth:`_set_parent`.
-			"""
-			# At the end of contructor execution, either self.limits or self._limits_list, and either self.restricts or self._restrict_list must be set, even if with all None
-
-
-			if limits is not None: # Params is to be used with domain restriction
-				if isinstance(limits, limits_type:=dict):
-					if len(limits)>0: 
-						if any(not isinstance(t, tuple) for t in limits.values()): raise TypeError('limits contains non-tuple entry.')
-						if any(len(t) != 2 for t in limits.values()): raise ValueError('limits contains non 2-length tuple.')
-					self.limits = limits
-					self._limits_list = None
-				elif isinstance(limits, limits_type:=list):
-					if len(limits)>0: 
-						if any(not isinstance(t, tuple) for t in limits): raise TypeError('limits list contains non-tuple entry.')
-						if any(len(t) != 2 for t in limits): raise ValueError('limits list contains non 2-length tuple.')
-					self._limits_list = limits
-					self.limits = None
-				else: raise TypeError('When informed, limits must be a dict or list.')
-
-				# limits was passed and is validated. Need restricts
-				if restricts is not None:
-					def _validate_restricts_signature(fn):
-						if callable(fn):
-							y=fn(0.5,(0,1))
-							if not Param.Utils.is_numeric(y): raise TypeError('restricts must return single numeric value')
-							if not (0 <= y and y <= 1): raise ValueError("Unexpected signature in restricts")
-						else: raise TypeError('restricts is not a callable')
-						# if not callable(fn) or len(inspect.signature(fn).parameters) != 2: raise ValueError("Unexpected signature in restricts")
-					if not callable(restricts) and not type(restricts) == limits_type : raise TypeError('When limits is informed, restricts must either be of same type or a singleton callable')
-					if callable(restricts):
-						_validate_restricts_signature(restricts)
-						# replicate singleton callable into dict or list depending on limits type
-						if limits_type == dict:
-							self.restricts = {k: restricts for k in limits.keys()}
-							self._restrict_list = None
-						else: # limits_type == list
-							self._restrict_list = [restricts for _ in limits]
-							self.restricts = None
-					elif isinstance(restricts, dict):
-						assert (mismatch := set(restricts.keys()) ^ set(limits.keys())) == set(), f"keys from restricts and from limits don't agree. Mismatch: {mismatch}"
-						for fn in restricts.values(): _validate_restricts_signature(fn)
-						self.restricts = restricts
-						self._restrict_list = None
-					elif isinstance(restricts, list):
-						for fn in restricts: _validate_restricts_signature(fn)
-						self._restrict_list = restricts
-						self.restricts = None
-					else: raise TypeError('When informed, restirct_map must be a dict or list.')
-				else: raise AttributeError('When limits is informed, restricts must also be informed')
-			else: # limits is None: Param is to be used without domain restriction. Set all to None
-				self.limits = None
+			# se limites vieram como lista, transforme em dict associando à ordem dos nomes
+			if hasattr(self, '_limits_list') and self._limits_list is not None:
+				assert len(self._limits_list) == len(names), 'Aborting. limits list length mismatch with params'
+				self.limits = {n: t for n, t in zip(names, self._limits_list)}
 				self._limits_list = None
-				self.restricts = None
+			# se restrict_map veio como lista, transforme em dict associando à ordem dos nomes
+			if hasattr(self, '_restrict_list') and self._restrict_list is not None:
+				assert len(self._restrict_list) == len(names), 'Aborting. restrict_map list length mismatch with params'
+				self.restrict_map = {n: fn for n, fn in zip(names, self._restrict_list)}
 				self._restrict_list = None
-				if restricts is not None: UserWarning('restricts was passed, but will be ignored because limits was not passed.')
 
-			# dry run guesser to validate signature
-			try: 
-				if not Param.Utils.is_numeric(guesser(0,1)): raise ValueError('guesser must return numeric value')
-			except Exception as e: raise ValueError('guesser has unexpected signature: must accept two numeric arguments (min, max)') from e
+			assert set(self.limits.keys()) == set(names), f'Parameter mismatch in domain for {self.__class__.__name__}'
+			min_dict = {k: v[0] for k, v in self.limits.items()}
+			max_dict = {k: v[1] for k, v in self.limits.items()}
+			parent.validate(min_dict); parent.validate(max_dict)
+			self._parent = parent
+			_param_domain_map[parent] = self
+		def guess(self, params:list=None):
+			if params is None:
+				assert self._parent is not None, 'Aborting. Domain not bound to parent.'
+				new = {}
+				for name in self._parent.names():
+					new[name] = self._guesser(*self.limits[name])
+				self._parent.update(new)
+			else:
+				assert isinstance(params, list), 'Aborting. params is not a list'
+				assert all(isinstance(name, str) for name in params), 'Aborting. params contain non-str entries'
+				# se limits foi recebido como lista, construa um mapa temporário usando a ordem de `params`
+				if getattr(self, 'limits', None) is None and getattr(self, '_limits_list', None) is not None:
+					assert len(self._limits_list) == len(params), 'Aborting. limits list length mismatch with params'
+					limits_map = {n: t for n, t in zip(params, self._limits_list)}
+				else:
+					limits_map = self.limits
+				new = {}
+				for name in params:
+					new[name] = self._guesser(*limits_map[name])
+				return new
+		def __init__(self, limits: dict[str, tuple]|list[tuple], restrict_map: dict[str, callable]|list[callable], guesser = np.random.uniform):
+			# limits pode ser dict ou list
+			if isinstance(limits, dict):
+				assert all(isinstance(t, tuple) for t in limits.values()), 'Aborting. limits contains non-tuple entry.'
+				assert all(len(t) == 2 for t in limits.values()), 'Aborting. limits contains non 2-length tuple.'
+				self.limits = limits
+				self._limits_list = None
+			else:
+				assert isinstance(limits, list), 'Aborting. limits is not a dict or list.'
+				assert all(isinstance(t, tuple) for t in limits), 'Aborting. limits list contains non-tuple entry.'
+				assert all(len(t) == 2 for t in limits), 'Aborting. limits list contains non 2-length tuple.'
+				self._limits_list = limits
+				self.limits = None
+
+			# restrict_map pode ser dict ou list
+			if isinstance(restrict_map, dict):
+				assert all(callable(fn) and len(inspect.signature(fn).parameters) == 2 for fn in restrict_map.values()), "Aborting. Unexpected signature in restrict_map"
+				self.restrict_map = restrict_map
+				self._restrict_list = None
+			else:
+				assert isinstance(restrict_map, list), 'Aborting. restirct_map is not a dict or list.'
+				assert all(callable(fn) and len(inspect.signature(fn).parameters) == 2 for fn in restrict_map), "Aborting. Unexpected signature in restrict_map list"
+				self._restrict_list = restrict_map
+				self.restrict_map = None
+
 			self._guesser = guesser
-		def __or__(self, other):
-			if not isinstance(other, Param.Domain): raise TypeError(f'{other} is not a Param.Domain')
-			# Merge limits
-			new_limits = self.limits.copy()
-			new_limits.update(other.limits)
-			# Merge restricts
-			new_restricts = self.restricts.copy()
-			new_restricts.update(other.restricts)
-			# Create new Domain
-			return Param.Domain(limits=new_limits, restricts=new_restricts, guesser=other._guesser)
-
 
 @dataclass
 class PlotStyle:
@@ -1225,6 +825,209 @@ class DDS(BaseEstimator, RegressorMixin):
 		self.M2=M2
 		self.M3=M3
 
+class M1(BaseEstimator, RegressorMixin):
+	def get_model_params(self):
+		"""
+		:return: The parameters of this model.
+		"""		
+		return self._kernel._params
+	def fit(self, X, y, plot = True):
+		"""
+		Orchestrates the training process by validating inputs and coordinating the kernel and optimizer.
+		:param X: Input features.
+		:param y: Target values.
+		"""
+		X, y = check_X_y(X, y)
+		self._optimizer.fit(X, y, plot)
+	def predict(self, X, plot = True, against=[]):
+		"""
+		Predicts the target values using the trained model.
+		:param X: Input features.
+		:param plot: Whether to plot the predictions against the true values.
+		:param against: True values to plot against the predictions. Only used if plot is True.
+		"""
+		X = check_array(X, ensure_2d=False, dtype=float)
+		if self._optimizer._training_finished:
+			pred = self._kernel.predict(X)
+			if plot: self._optimizer.plotter.plot_prediction(y_true=against, y_pred=pred)
+			return pred
+		else:
+			warnings.warn("Model is not trained yet. Call fit() before predict().", UserWarning)
+		return 
+	def score(self, X, y):
+		"""
+		Evaluates the model by validating inputs and delegating to the optimizer's score method.
+		:param X: Input features.
+		:param y: Target values.
+		:return: Model score.
+		"""
+		X, y = check_X_y(X, y)
+		return self._optimizer.score(X, y)
+
+	def __init__(self, kernel: 'FirstOrderStrategy', optimizer: 'CustomOptimizer', random_state = None, plotstyle: PlotStyle = None):
+		"""
+		:param kernel: Function, as a FunctionWrapper object, containing logic and calculations that will produce predictions.
+		:param loss: Loss function, as a FunctionWrapper object, to be used in training the model.
+		:param optimizer: Optimizer function, as a FunctionWrapper object, to be used in training the model.
+		"""
+		self._kernel = kernel;			self._kernel._model = self
+		self._optimizer = optimizer;	self._optimizer._model = self
+		
+		self.plotstyle = plotstyle
+		# Hyperparamaters
+		self.random_state = random_state
+	def get_params(self, deep=True):
+		params = {
+			'random_state': self.random_state,
+		}
+		# Kernel params
+		kernel_params = self._kernel.get_params(deep=deep) if hasattr(self._kernel, "get_params") else {}
+		for k, v in kernel_params.items():
+			params[f"kernel__{k}"] = v
+		# Optimizer params
+		optimizer_params = self._optimizer.get_params(deep=deep) if hasattr(self._optimizer, "get_params") else {}
+		for k, v in optimizer_params.items():
+			params[f"optimizer__{k}"] = v
+		return params
+	def set_params(self, **params):
+		kernel_params = {k.split("__", 1)[1]: v for k, v in params.items() if k.startswith("kernel__")}
+		optimizer_params = {k.split("__", 1)[1]: v for k, v in params.items() if k.startswith("optimizer__")}
+		if kernel_params and hasattr(self._kernel, "set_params"):
+			self._kernel.set_params(**kernel_params)
+		if optimizer_params and hasattr(self._optimizer, "set_params"):
+			self._optimizer.set_params(**optimizer_params)
+		return self
+class SimpleStrategy(FunctionWrapper):
+	@dataclass
+	class Params:
+		Ki: List[float] | float
+		delay_samples: int = None
+		delay_seconds: float = None
+	@dataclass
+	class ParamSpace:
+		Ki: tuple
+		delay_samples: tuple
+		
+	def _params_domain_restrict(self,params: Params) -> Params:
+		Ki_restrict = lambda kk: math.sqrt(kk**2+self._param_space.Ki[0]**2)
+		Ki = [Ki_restrict(kk) for kk in params.Ki] if isinstance(params.Ki, list) else Ki_restrict(params.Ki)
+
+		if delay_seconds is not None:
+			delay_seconds = float(min(max(params.delay_seconds, self._param_space.delay_seconds[0], 0), self._param_space.delay_seconds[1]))
+			delay_samples = None
+		else:
+			delay_samples = int(min(max(params.delay_samples, self._param_space.delay_samples[0], 0), self._param_space.delay_samples[1]))
+		return SimpleStrategy.Params(Ki=Ki, delay_samples=delay_samples, delay_seconds=delay_seconds)
+	def set_model_parameters(self, params: Params):
+		params = self._params_domain_restrict(params)
+		self._params = {
+			'Ki': params.Ki,
+			'delay_samples': max(params.delay_samples,0),
+		}
+	def get_model_params(self) -> Params:
+		"""
+		Returns current M2 kernel model parameters.
+		:return: Parameter values, organized in a Params object.
+		"""
+		return self.Params(
+			Ki=self._params['Ki'],
+			delay_samples=self._params['delay_samples'],
+		)
+	def guess_params(self) -> Params:
+		return self.Params(
+			Ki = np.random.uniform(*self._param_space.Ki),
+			delay_samples = np.random.uniform(*self._param_space.delay_samples),
+		)
+	def _next_temp(self, cpu_current) -> float:
+		"""
+		Computes the next temperature incrementally
+			TempNext = 
+				sum( FCPU(cpu_current) * Ki )
+
+		:param CPUCurrent: Current CPU usage per core.
+		:return: Next temperature.
+		"""
+		Ki=self._params['Ki']
+
+		FCPU = self.FCPU
+
+		if isinstance(Ki, float):
+			next_temp = Ki * sum(FCPU(cpu_current))
+		elif isinstance(Ki, List[float]):
+			next_temp  = sum([kk * FCPU(apply_slice(cpu_current, ii, along_dim=max(1,cpu_current.shape[0]), return_format='flat')) for ii, kk in enumerate(Ki)])
+
+		return next_temp
+	def predict(self, X) -> List:
+		r"""
+		Calculates a prediction series using the parrameters currently saved in the object.
+
+		:param cpu_series: Pandas Series containing CPU usage values over time.
+		:return: Pandas Series containing the simulated temperature values over time.
+		"""			
+		# X = check_array(X, ensure_2d=False, dtype=float)
+		X = X.ravel()
+		params = self.get_model_params()
+		Ki = params.Ki
+		if isinstance(Ki, List[float]): assert len(Ki) == X.shape[1], f"Length of Ki ({len(Ki)}) does not match number of columns on cpu_current ({X.shape[1]})."
+		pred = [self._temp0] * X.shape[0]
+		
+		#region Resolve operators for different input cases
+		if (delay_seconds := params.delay_seconds) is not None:
+			def EXPECTED_SIGNATURE_CHECK(arg: float) -> bool: ...
+			def EXPECTED_SIGNATURE_CONVERT(arg: float) -> int: ...
+			func_check = (_is_time_window_smaller_than := self._is_time_window_smaller_than_delay)
+			func_convert = (_to_samples_from_t0 := self._to_samples_from_t0)
+			delay = delay_seconds
+		elif (delay_samples := params.delay_samples) is not None:
+			def EXPECTED_SIGNATURE_CHECK(arg: int) -> bool: ...
+			def EXPECTED_SIGNATURE_CONVERT(arg: int) -> int: ...
+			func_check = (_is_time_window_smaller_than := lambda delay: X.shape[0] <= delay)
+			func_convert = (_to_samples_from_t0 := lambda delay: delay)
+			delay = delay_samples
+		for func in ((func_check,EXPECTED_SIGNATURE_CHECK), (func_convert,EXPECTED_SIGNATURE_CONVERT)):
+			assert callable(func[0]) and inspect.signature(func[0]) == inspect.signature(func[1]), f"Signature mismatch: {inspect.signature(func[0])} != {inspect.signature(func[1])}"
+		#endregion
+		
+		if _is_time_window_smaller_than(delay): return pred
+		delay_samples = _to_samples_from_t0(delay)
+		for (tt,_),_ in np.ndenumerate(X[delay_samples:,:]):
+			pred[tt+delay_samples] = self._next_temp(X[tt+delay_samples,:])
+		return pred
+
+	def __init__(self, FCPU: callable, temp0: float, params: Params=None, param_space: ParamSpace=None, _is_time_window_smaller_than_delay: callable=None, _to_samples_from_t0: callable=None):	# Dt test value was Dt = 30/510.0
+		r"""
+		Instantiates the M2Kernel object
+
+		:param FCPU: unit transform functions from cpu% to heat.
+		:param FTEMP: unit transform functions from temperature gradient to heat.
+		:param params: Dictionary of parameters for the M2 kernel model, according to the base closed-form analytical function:
+
+			TempNext = TempCurrent
+			+ KCPU * FCPU(CPUCurrent) * (1 - exp(- t / TauCPU))
+			- KTemp * FTEMP(TempCurrent, TempExt) * (1 - exp(- t / TauTemp))
+
+			It is strongly recommended to use the CalculateParams method provided by this class to generate this dictionary.
+		:param TempAmb: Ambient temperature, used as the initial temperature.
+		:param Dt: Time step size as used in the dataset this model will target.
+		"""			
+		super().__init__()
+		self.FCPU = FCPU
+		self._temp0 = temp0
+		if param_space is None: self._param_space = self.ParamSpace(Ki=(0.1,100), delay_seconds=(0,2))
+		else: self._param_space = param_space
+		if params is None: params = self.guess_params()
+		self.set_model_parameters(params)
+		self._is_time_window_smaller_than_delay = _is_time_window_smaller_than_delay
+		self._to_samples_from_t0 = _to_samples_from_t0
+	def get_params(self, deep=True):
+		params = {
+			'noise_level': self.noise_level,
+		}
+		return params
+	def set_params(self, **params):
+		for key, value in params.items():
+			if hasattr(self, key): setattr(self, key, value)
+		return self
 
 class M2(BaseEstimator, RegressorMixin):
 	def get_model_params(self):
@@ -1314,6 +1117,14 @@ class FirstOrderStrategy(FunctionWrapper):
 		KTemp: float
 		TauCPU: float
 		TauTemp: float
+		param_names = ['KCPU', 'KTemp', 'TauCPU', 'TauTemp']
+		def to_list(self): return [self.KCPU, self.KTemp, self.TauCPU, self.TauTemp]
+		def from_dict(self, params: dict):
+			assert len(params)==len(self.param_names), f'Parameter count mismatch for object of type {self.__class__.__name__}'
+			assert (diff := params.keys() ^ self.param_names) == set(), f'Unrecognized parameters for object of type {self.__class__.__name__}: {diff}'
+			for pp, name in enumerate(self.param_names):
+				self.__setattr__(name,params[name])
+			
 	@dataclass
 	class ParamSpace:
 		KCPU: tuple
@@ -1326,7 +1137,7 @@ class FirstOrderStrategy(FunctionWrapper):
 		TauCPU = np.clip(params.TauCPU, *self._param_space.TauCPU)
 		TauTemp = np.clip(params.TauTemp, *self._param_space.TauTemp)
 		return FirstOrderStrategy.Params(KCPU=KCPU, KTemp=KTemp, TauCPU=TauCPU, TauTemp=TauTemp)
-	def set_model_parameters(self, params: dict):
+	def set_model_parameters(self, params: Params):
 		"""
 			Sets parameters of the M2 kernel model.
 
@@ -1336,15 +1147,34 @@ class FirstOrderStrategy(FunctionWrapper):
 		# 	TempNext = TempCurrent
 		# 	+ KCPU * FCPU(CPUCurrent) * (1 - exp(- t / TauCPU))
 		# 	- KTemp * FTEMP(TempCurrent, TempExt) * (1 - exp(- t / TauTemp))
-		self._params.update(params)
+		params = self._params_domain_restrict(params)
+		self._params = {
+			'KCPU': params.KCPU,
+			'KTemp': params.KTemp,
+			'TauCPU': params.TauCPU,
+			'TauTemp': params.TauTemp,
+			# 'ALPHA_CPU': np.exp(-self.Dt/params.TauCPU),
+			'BETA_CPU': 1 - np.exp(-self.Dt/params.TauCPU),
+			# 'ALPHA_TEMP': np.exp(-self.Dt/params.TauTemp),
+			'BETA_TEMP': 1 - np.exp(-self.Dt/params.TauTemp),
+		}
 	def get_model_params(self) -> Params:
 		"""
 		Returns current M2 kernel model parameters.
 		:return: Parameter values, organized in a Params object.
 		"""
-		return self._params.to_dict(Param.Utils.FLAG_PRESCRIBED)
+		return self.Params(
+			KCPU=self._params['KCPU'],
+			KTemp=self._params['KTemp'],
+			TauCPU=self._params['TauCPU'],
+			TauTemp=self._params['TauTemp'])
 	def guess_params(self) -> Params:
-		return self._params.guess(inplace=False)
+		return self.Params(
+			KCPU = np.random.uniform(*self._param_space.KCPU),
+			KTemp = np.random.uniform(*self._param_space.KTemp),
+			TauCPU = np.random.uniform(*self._param_space.TauCPU),
+			TauTemp = np.random.uniform(*self._param_space.TauTemp),
+			)
 	def _next_temp(self, cpu_current, temp_current, temp_ext):
 		r"""
 		Computes the next temperature incrementally based on the current CPU usage, 
@@ -1359,7 +1189,10 @@ class FirstOrderStrategy(FunctionWrapper):
 		:param TempExt: External temperature.
 		:return: Next temperature.
 		"""
-		KCPU, KTEMP, BETA_CPU, BETA_TEMP = tuple(self._params[['KCPU','KTemp','BetaCPU','BetaTemp']].values())
+		KCPU=self._params['KCPU']
+		KTEMP=self._params['KTemp']
+		BETA_CPU=self._params['BETA_CPU']
+		BETA_TEMP=self._params['BETA_TEMP']
 		FCPU = self.FCPU
 		# FCPU = lambda cpu: cpu**2
 		FTEMP = self.FTEMP
@@ -1383,7 +1216,7 @@ class FirstOrderStrategy(FunctionWrapper):
 			pred[cc] = self._next_temp(cpu, pred[cc-1], self._temp0)
 		return pred
 
-	def __init__(self, FCPU: callable, FTEMP: callable, temp0: float,  params: Param, noise_level=0):	# Dt test value was Dt = 30/510.0
+	def __init__(self, FCPU: callable, FTEMP: callable, temp0: float, Dt:float,  params: Params=None, param_space: ParamSpace = None, noise_level=0):	# Dt test value was Dt = 30/510.0
 		r"""
 		Instantiates the M2Kernel object
 
@@ -1405,9 +1238,139 @@ class FirstOrderStrategy(FunctionWrapper):
 		self._temp0 = temp0
 		self.noise_level = noise_level
 
-		if not isinstance(params, Param): raise TypeError('params must be a Param object')
-		self._params = params
+		self.Dt = Dt # set_params depends on Dt, so it must be called after setting it.
+		if param_space is None: self._param_space = self.ParamSpace(KCPU = (0.00001, 1), KTemp=(0.00001, 0.01), TauCPU=(1e-9,2), TauTemp=(1e-9,2))
+		else: self._param_space = param_space
+		if params is None: params = self.guess_params()
+		self.set_model_parameters(params)	
+	def get_params(self, deep=True):
+		params = {
+			'noise_level': self.noise_level,
+		}
+		return params
+	def set_params(self, **params):
+		for key, value in params.items():
+			if hasattr(self, key): setattr(self, key, value)
+		return self
+	@dataclass
+	class Params:
+		"""
+		A dataclass to encapsulate the parameters for the M2 kernel model.
 
+		Attributes:
+			KCPU (float): CPU usage to heat transfer gain.
+			KTemp (float): Temperature gradient usage to heat transfer gain.
+			TauCPU (float): Time constant for the CPU usage effect on temperature.
+			TauTemp (float): Time constant for the temperature gradient effect on temperature.
+		"""
+		KCPU: float
+		KTemp: float
+		TauCPU: float
+		TauTemp: float
+	@dataclass
+	class ParamSpace:
+		KCPU: tuple
+		KTemp: tuple
+		TauCPU: tuple
+		TauTemp: tuple
+	def _params_domain_restrict(self,params: Params) -> Params:
+		KCPU = math.sqrt(params.KCPU**2+self._param_space.KCPU[0]**2)
+		KTemp = math.sqrt(params.KTemp**2+self._param_space.KTemp[0]**2)
+		TauCPU = np.clip(params.TauCPU, *self._param_space.TauCPU)
+		TauTemp = np.clip(params.TauTemp, *self._param_space.TauTemp)
+		return FirstOrderStrategy.Params(KCPU=KCPU, KTemp=KTemp, TauCPU=TauCPU, TauTemp=TauTemp)
+	def set_model_parameters(self, params: Params):
+		"""
+			Sets parameters of the M2 kernel model.
+
+			:param params: An instance of M2KernelParams containing the new parameter values.
+		"""
+		# Calculates the parameters for the M2 kernel, according to the base closed-form analytical function:
+		# 	TempNext = TempCurrent
+		# 	+ KCPU * FCPU(CPUCurrent) * (1 - exp(- t / TauCPU))
+		# 	- KTemp * FTEMP(TempCurrent, TempExt) * (1 - exp(- t / TauTemp))
+		params = self._params_domain_restrict(params)
+		self._params = {
+			'KCPU': params.KCPU,
+			'KTemp': params.KTemp,
+			'TauCPU': params.TauCPU,
+			'TauTemp': params.TauTemp,
+			# 'ALPHA_CPU': np.exp(-self.Dt/params.TauCPU),
+			'BETA_CPU': 1 - np.exp(-self.Dt/params.TauCPU),
+			# 'ALPHA_TEMP': np.exp(-self.Dt/params.TauTemp),
+			'BETA_TEMP': 1 - np.exp(-self.Dt/params.TauTemp),
+		}
+	def get_model_params(self) -> Params:
+		"""
+		Returns current M2 kernel model parameters.
+		:return: Parameter values, organized in a Params object.
+		"""
+		return self.Params(
+			KCPU=self._params['KCPU'],
+			KTemp=self._params['KTemp'],
+			TauCPU=self._params['TauCPU'],
+			TauTemp=self._params['TauTemp'])
+	def guess_params(self) -> Params:
+		return self.Params(
+			KCPU = np.random.uniform(*self._param_space.KCPU),
+			KTemp = np.random.uniform(*self._param_space.KTemp),
+			TauCPU = np.random.uniform(*self._param_space.TauCPU),
+			TauTemp = np.random.uniform(*self._param_space.TauTemp),
+			)
+	def _next_temp(self, cpu_current):
+		"""
+		Computes the next temperature incrementally
+			TempNext = 
+				sum( FCPU(cpu_current) * Ki )
+
+		:param CPUCurrent: Current CPU usage per core.
+		:return: Next temperature.
+		"""
+		Ki=self._params['Ki']
+		FCPU = self.FCPU
+		# FCPU = lambda cpu: cpu**2
+
+		next_temp  = Ki * FCPU(cpu_current)
+
+		return next_temp
+	def predict(self, X) -> List:
+		r"""
+		Calculates a prediction series using the parrameters currently saved in the object.
+
+		:param cpu_series: Pandas Series containing CPU usage values over time.
+		:return: Pandas Series containing the simulated temperature values over time.
+		"""			
+		# X = check_array(X, ensure_2d=False, dtype=float)
+		X = X.ravel()
+		pred = [self._temp0] * len(X)
+		for cc, cpu in enumerate(X[1:], start=1):
+			pred[cc] = self._next_temp(cpu, pred[cc-1], self._temp0)
+		return pred
+
+	def __init__(self, FCPU: callable, temp0: float, Dt:float,  start_params: Params=None, param_space: ParamSpace = None, noise_level=0):	# Dt test value was Dt = 30/510.0
+		r"""
+		Instantiates the M2Kernel object
+
+		:param FCPU: unit transform functions from cpu% to heat.
+		:param FTEMP: unit transform functions from temperature gradient to heat.
+		:param params: Dictionary of parameters for the M2 kernel model, according to the base closed-form analytical function:
+
+			TempNext = TempCurrent
+			+ KCPU * FCPU(CPUCurrent) * (1 - exp(- t / TauCPU))
+			- KTemp * FTEMP(TempCurrent, TempExt) * (1 - exp(- t / TauTemp))
+
+			It is strongly recommended to use the CalculateParams method provided by this class to generate this dictionary.
+		:param TempAmb: Ambient temperature, used as the initial temperature.
+		:param Dt: Time step size as used in the dataset this model will target.
+		"""			
+		super().__init__()
+		self.FCPU = FCPU
+		self._temp0 = temp0
+		self.noise_level = noise_level
+		if param_space is None: self._param_space = self.ParamSpace(KCPU = (0.00001, 1), KTemp=(0.00001, 0.01), TauCPU=(1e-9,2), TauTemp=(1e-9,2))
+		else: self._param_space = param_space
+		if start_params is None: start_params = self.guess_params()
+		self.set_model_parameters(start_params)	
 	def get_params(self, deep=True):
 		params = {
 			'noise_level': self.noise_level,
@@ -1694,13 +1657,13 @@ class CustomOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		self._current_prediction = self._model._kernel.predict(X)
 		rmse = SCORE_FUNCTION(y, self._current_prediction)
 		return -rmse
-	def optimize(self, params: dict) -> dict:
+	def optimize(self, params: FirstOrderStrategy.Params) -> FirstOrderStrategy.Params:
 			"""
 			Implements a single step of Stochastic Gradient Descent (SGD) to calculate the next set of candidate parameters.
 			:param params: Current parameters of the M2Kernel as a Params object.
 			:return: Updated parameters as a Params object.
 			"""
-			KCPU, KTemp, TauCPU, TauTemp = tuple(params.values())
+			KCPU, KTemp, TauCPU, TauTemp = params.KCPU, params.KTemp, params.TauCPU, params.TauTemp
 
 			grad = self._loss_gradient()
 			grad_KCPU = 2 * grad
@@ -1714,7 +1677,7 @@ class CustomOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			TauTemp -= self.learning_rate * grad_TauTemp
 
 			# Return updated parameters as a Params object
-			return dict(zip(params.keys(),[KCPU, KTemp, TauCPU, TauTemp]))
+			return FirstOrderStrategy.Params(KCPU, KTemp, TauCPU, TauTemp)
 	def _update_score(self, X, y):
 		self.current_score = self.score(X, y)
 		self._gradient_window = (self._gradient_window + [self.current_score])[-self.gradient_window_size:]

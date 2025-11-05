@@ -13,7 +13,7 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from measure_utils import report_output, NOPLOT
 
 MODEL_FILENAME = os.path.join("models","lstm_model.pt")
-NUM_EPOCHS = 20
+NUM_EPOCHS = 8
 SEQ_LENGTH = 50
 LAG_WINDOW = 10  # seconds. Set to zero to not generate lag features
 LAG_FEATURE_EXCLUDE_COLUMNS = ['T_CPU']  # Columns to exclude from lag feature generation
