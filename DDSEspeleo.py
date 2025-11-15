@@ -10,30 +10,34 @@ from ddslib import *
 import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from measure_utils import report_output, NOPLOT
-from ddslib import M2, FirstOrderStrategy, CustomOptimizer, get_plotstyle
+from ddslib import M2, FirstOrderStrategy, FirstOrderOptimizer, get_plotstyle
 import tellib
 
 #region PLOT_ flag definitions
 PLOT_DATASET = 1<<0
 PLOT_CLIPPED_DATASET = 1<<1
-PLOT_M2_PARTIAL_PREDICTION = 1<<2
-PLOT_M3_PARTIAL_PREDICTION = 1<<3
-PLOT_M2_TRAINING_HISTORY = 1<<4
-PLOT_M3_TRAINING_HISTORY = 1<<5 # Not implemented
-PLOT_COMPOSITE_PREDICTION = 1<<6
+PLOT_M1_PREDICTION = 1<<2
+PLOT_M2_PARTIAL_PREDICTION = 1<<3
+PLOT_M3_PARTIAL_PREDICTION = 1<<4
+PLOT_M1_TRAINING_HISTORY = 1<<5
+PLOT_M2_TRAINING_HISTORY = 1<<6
+PLOT_M3_TRAINING_HISTORY = 1<<7 # Not implemented
+PLOT_M2M3_COMPOSITE_PREDICTION = 1<<8
 #endregion
 PLOT = 0 if NOPLOT else (	# Comment and uncomment to disable/enable plots
 # PLOT_DATASET |
 # PLOT_CLIPPED_DATASET | 
+# PLOT_M1_TRAINING_HISTORY | 
+PLOT_M1_PREDICTION | 
 # PLOT_M2_TRAINING_HISTORY | 
 # PLOT_M2_PARTIAL_PREDICTION | 
 # PLOT_M3_TRAINING_HISTORY | 
 # PLOT_M3_PARTIAL_PREDICTION | 
-PLOT_COMPOSITE_PREDICTION | 
+PLOT_M2M3_COMPOSITE_PREDICTION | 
 0 )
 
 #region SELECTED_MODEL flag definitions
-M1_SIMPLE = 1<<0
+M1_DELAYREGRESSION = 1<<0
 M2_1ST_ORDER = 1<<1
 M2_2ND_ORDER = 1<<2
 M3_XGB = 1<<3
@@ -41,7 +45,7 @@ M3_RNN = 1<<4
 M3_LSTM = 1<<5
 #endregion
 SELECTED_MODELS = (	# Comment and uncomment to select used models. Select one for each component
-# M1_SIMPLE |
+M1_DELAYREGRESSION |
 M2_1ST_ORDER |
 # M2_2ND_ORDER |	# not yet implemented
 # M3_XGB |
@@ -211,6 +215,8 @@ def resolvetel():
 	tel = telobj.get()
 	return tel.tel
 tel = resolvetel()
+DT=(tel.index[-1]-tel.index[0])/len(tel)
+TARGET_COL = 'T_CPU'
 
 #%% Calculate and extract features from tel
 def calcfeatures(tel: pd.DataFrame) -> pd.DataFrame:
@@ -242,8 +248,8 @@ def calcfeatures(tel: pd.DataFrame) -> pd.DataFrame:
 		df.loc[:,'CPU'] = tel.loc[:,cols].max(axis=1)/100
 		df = df.join(tel[cols]/100)
 
-	return df.dropna()
-dataset=calcfeatures(tel)
+	return df.dropna(), len(cols)
+dataset, NUM_CORES = calcfeatures(tel)
 
 #%% Define the plotter for the dataset
 class DatasetPlotter:
@@ -311,13 +317,13 @@ class DatasetPlotter:
 
 		for seg in segments:
 			if seg['state']=='high':
-				start = df.index[seg['pos_low']]
-				end = df.index[seg['pos_up']]
+				start = df.index[seg['pos_first']]
+				end = df.index[seg['pos_last']]
 				# for axis in ax: axis.axvspan(start,end,color = "#ff7676ff", alpha=0.4)
 
 		if show_segment:
-			start = max(df.index[show_segment['pos_low']]-margin,df.index[0])
-			end = min(df.index[show_segment['pos_up']]+margin,df.index[-1])
+			start = max(df.index[show_segment['pos_first']]-margin,df.index[0])
+			end = min(df.index[show_segment['pos_last']]+margin,df.index[-1])
 			for axis in ax: axis.set_xlim(start,end)
 			
 
@@ -349,14 +355,14 @@ def HighCPUDetect(df, margin=0,threshold=0.8):
 	algo = rpt.Window(model=model).fit(cpu_percent)
 	ChangePoints = algo.predict(pen=5)
 	Segments=[]
-	for cc, pos_up in enumerate(ChangePoints):
-		pos_up=min(pos_up+margin,len(cpu_percent))
-		pos_low=max(ChangePoints[cc-1]+1-margin,0) if cc>0 else 0
+	for cc, pos_last in enumerate(ChangePoints):
+		pos_last=min(pos_last+margin,len(cpu_percent))
+		pos_first=max(ChangePoints[cc-1]+1-margin,0) if cc>0 else 0
 		
 		
-		avg=float(np.average(cpu_percent[pos_low:pos_up]))
-		if avg>threshold: 	Segments.append({'state':'high','pos_low':pos_low,'pos_up':pos_up,'avg':avg})
-		else:				Segments.append({'state':'norm','pos_low':pos_low,'pos_up':pos_up,'avg':avg})
+		avg=float(np.average(cpu_percent[pos_first:pos_last]))
+		if avg>threshold: 	Segments.append({'state':'high','pos_first':pos_first,'pos_last':pos_last,'avg':avg})
+		else:				Segments.append({'state':'norm','pos_first':pos_first,'pos_last':pos_last,'avg':avg})
 	return ChangePoints, Segments
 bkpts, segments = HighCPUDetect(dataset, margin = 5,threshold=0.8)
 #%% Dataset plots
@@ -389,7 +395,7 @@ if plotdataset: dsplotter.plot(dataset,segments=segments,show_segment=segments[1
 				save_with_title=PS.save_with_title
 )
 
-idx = segments[1]['pos_low']
+idx = segments[1]['pos_first']
 df=dataset[range(len(dataset))<idx]			# clip dataset before temperature peak
 if plot_clipped_dataset := bool(PLOT & PLOT_CLIPPED_DATASET) : dsplotter.plot(df,plot_only_cpu_feature=True,
 				savefig_options=PlotStyle.compose_savefig_options(
@@ -409,12 +415,14 @@ if plot_clipped_dataset := bool(PLOT & PLOT_CLIPPED_DATASET) : dsplotter.plot(df
 #%% Define ambient temperature to be the temperature readout from the first few samples
 def calc_temp_amp(df):
 	return df.loc[df.index<=10,'T_CPU'].mean()
-df2=df[['T_CPU','CPU']].copy(deep=True)
+df2=df[[TARGET_COL,'CPU']].copy(deep=True)
+
 
 
 
 #%% Define and instantiate DDS model components
-if SELECTED_MODELS & M1_SIMPLE:
+CLIP_RESTRICT = lambda value, limits: np.clip(value, *limits)
+if SELECTED_MODELS & M1_DELAYREGRESSION:
 	def compose_is_time_window_smaller_than_delay(time_index: pd.Index) -> bool:
 		if isinstance(time_index, (pd.DatetimeIndex)):
 			return lambda delay_seconds: (time_index[-1]-time_index[0]).total_seconds() <= delay_seconds
@@ -424,7 +432,8 @@ if SELECTED_MODELS & M1_SIMPLE:
 	def compose_to_samples_from_t0(time_index: pd.Index, unit: str='sample', t0=0) -> int:
 		time_values = time_index.to_numpy(dtype=float)
 		if unit == 'sample': t0 = time_index[t0]
-		if unit == 'index': pass
+		elif unit == 'index': pass
+		else: raise ValueError(f'Unrecongnized value for unit argument: {unit}')
 		if isinstance(time_index, (pd.DatetimeIndex)):
 			if unit == 'index': t0 = np.datetime64(t0)
 			def _to_samples_from_t0(delay: float) -> int:
@@ -440,23 +449,38 @@ if SELECTED_MODELS & M1_SIMPLE:
 				return int(idx)
 		else: raise TypeError("time_index must be a pandas Index or a numeric array-like.")
 		return _to_samples_from_t0
-	m1obj=M1(SimpleStrategy(lambda cpu: cpu**2, temp_0=dataset['T_CPU'].iloc[idx], 
-		is_time_window_larger_than_delay=compose_is_time_window_smaller_than_delay(dataset.index),
-		to_samples_from_t0=compose_to_samples_from_t0(dataset.index,'sample',idx),
-		param_space=SimpleStrategy.ParamSpace(Ki=(0.1,100), delay_seconds=(0,2)),
+	max_delay_samples = int(timedelta(seconds=1).total_seconds()/DT)
+	row_list = range(len(dataset))
+	row_mask = [(segments[1]['pos_first'] <= row) and (row  < segments[1]['pos_last'] + max_delay_samples) for row in row_list]
+	features = [f'CPU_{cpu}' for cpu in range(NUM_CORES)]
+	# features = ['CPU']	
+	df1 = dataset.loc[row_mask, [TARGET_COL]+features]
+	param_names = ['delay']+[f'w{ff}' for ff in range(len(features))]
+	limits = [(0,max_delay_samples)] + [Param.Utils.UNDETERMINED_LIMIT]*len(features)
+	restricts=[CLIP_RESTRICT] + [Param.Utils.IDENTITY_RESTRICT]*len(features)
+	types = dict(zip(param_names,[int] + [float for _ in range(len(features))]))
+	m1obj=M1(DelayRegressionStrategy(FCPU=lambda cpu: cpu**2, temp0=df1[TARGET_COL].iloc[0],
+			params = Param(
+				domain=Param.Domain(limits=limits, restricts=restricts),
+				params=param_names, 
+				types = types),
 		),
-		CustomOptimizer(training_duration=timedelta(seconds=30), composition='any', 
-			training_stop_flags = CustomOptimizer.StopConditions.GLOBAL_MIN_LOSS 
-								| CustomOptimizer.StopConditions.GLOBAL_MAX_DURATION
-					),
+		optimizer = DelayRegressionOptimizer(),
 		plotstyle=PS
+	)
+	
+	m1obj.fit(plot= bool(PLOT & PLOT_M1_TRAINING_HISTORY), 
+		X = df1.loc[:,df1.columns != TARGET_COL], 
+		y = df1[TARGET_COL]
+	)
+	m1obj.predict(plot = bool(PLOT & PLOT_M1_PREDICTION), against=df1[TARGET_COL],
+		X = df1.loc[:,df1.columns != TARGET_COL]
 	)
 if SELECTED_MODELS & M2_1ST_ORDER:
 	derive_inputs = ['TauCPU','TauTemp']
 	behaviors = dict(BetaCPU=Param.Utils.FLAG_DERIVED, BetaTemp=Param.Utils.FLAG_DERIVED)
 	derive_outputs = list(behaviors.keys())
 	unspec_beta_dict = dict(zip(derive_outputs,[None]*len(derive_outputs)))
-	Dt=(df2.index[-1]-df2.index[0])/len(df2)
 	def compose_derive_1order_beta(Dt: float, derive_args: dict):
 		expr = lambda tau: 1- np.exp(-Dt/tau)
 		def derive_fn(**kwargs):
@@ -467,8 +491,8 @@ if SELECTED_MODELS & M2_1ST_ORDER:
 		return derive_fn
 	m2obj=M2(FirstOrderStrategy(lambda cpu: cpu**2, lambda temp_current, temp_ext: temp_current-temp_ext, temp0=calc_temp_amp(df2),
 			params = Param(behaviors=behaviors, types = float, derive_after_init=True,
-				derive_fn=compose_derive_1order_beta(Dt,dict(zip(derive_inputs,derive_outputs))), derive_inputs=derive_inputs, 
-				domain = Param.Domain(limits=dict(KCPU=(8e-2,8), KTemp=(1e-3,0.01), TauCPU=(8e-2,8), TauTemp=(1e-1,10)),restricts=lambda value, limits: np.clip(value, *limits)),
+				derive_fn=compose_derive_1order_beta(DT,dict(zip(derive_inputs,derive_outputs))), derive_inputs=derive_inputs, 
+				domain = Param.Domain(limits=dict(KCPU=(8e-2,8), KTemp=(1e-3,0.01), TauCPU=(8e-2,8), TauTemp=(1e-1,10)),restricts=CLIP_RESTRICT),
 				params=['KCPU', 'KTemp', 'TauCPU', 'TauTemp'] + derive_outputs		# Uncomment to not use starting values
 				# params=dict(KCPU=0.8955001304, KTemp=0.0008084840447, TauCPU=0.7114574813, TauTemp=0.4034388338) | unspec_beta_dict,	# RMSE = 1.249
 				# params=dict(KCPU=0.7994835811, KTemp=0.0012296959998, TauCPU=0.8146071702, TauTemp=0.9513807657) | unspec_beta_dict,	# RMSE = 1.398
@@ -477,17 +501,16 @@ if SELECTED_MODELS & M2_1ST_ORDER:
 				# params=dict(KCPU=7.0351605688, KTemp=0.0097643619771, TauCPU=6.1773441730, TauTemp=5.8189918760) | unspec_beta_dict,   	# RMSE = 1.072
 			)
 		),
-		CustomOptimizer(training_duration=timedelta(seconds=1), composition='any', 
-			training_stop_flags = CustomOptimizer.StopConditions.GLOBAL_MIN_LOSS 
-								| CustomOptimizer.StopConditions.GLOBAL_MAX_DURATION
+		FirstOrderOptimizer(training_duration=timedelta(seconds=1), composition='any', 
+			training_stop_flags = FirstOrderOptimizer.StopConditions.GLOBAL_MIN_LOSS 
+								| FirstOrderOptimizer.StopConditions.GLOBAL_MAX_DURATION
 					),
 		plotstyle=PS
 	)	
-	m2target_col = 'T_CPU'
-	m2obj.fit(df2['CPU'].to_frame(), df2[m2target_col], plot= bool(PLOT & PLOT_M2_TRAINING_HISTORY))
-	m2pred = m2obj.predict(df2['CPU'].to_frame(), 		plot= bool(PLOT & PLOT_M2_PARTIAL_PREDICTION), against = df2[m2target_col])
+	m2obj.fit(df2['CPU'].to_frame(), df2[TARGET_COL], plot= bool(PLOT & PLOT_M2_TRAINING_HISTORY))
+	m2pred = m2obj.predict(df2['CPU'].to_frame(), 		plot= bool(PLOT & PLOT_M2_PARTIAL_PREDICTION), against = df2[TARGET_COL])
 
-m3_source_col = m2target_col
+m3_source_col = TARGET_COL
 df3=df.loc[:,df.columns != m3_source_col].copy(deep=True)
 target_col = 'Temp_residue'
 df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
@@ -618,6 +641,6 @@ class CompositePredictionPlotter:
 		)
 		plt.show(block=True)
 predplotter=CompositePredictionPlotter(PS)
-if plotpred:=bool(PLOT & PLOT_COMPOSITE_PREDICTION): predplotter.plot(df2[m2target_col], m2pred+m3pred)
+if plotpred:=bool(PLOT & PLOT_M2M3_COMPOSITE_PREDICTION): predplotter.plot(df2[TARGET_COL], m2pred+m3pred)
 
-if NOPLOT: report_output(SCORE_FUNCTION(df2[m2target_col],m2pred+m3pred))
+if NOPLOT: report_output(SCORE_FUNCTION(df2[TARGET_COL],m2pred+m3pred))
