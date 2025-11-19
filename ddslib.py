@@ -1,6 +1,6 @@
 #region Imports
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from os import PathLike
 import os
 from matplotlib.font_manager import FontProperties, findfont
@@ -8,20 +8,16 @@ from sklearn.metrics import root_mean_squared_error
 import inspect, ast, textwrap, warnings
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.utils.validation import check_X_y, check_array
-from sklearn.linear_model import SGDRegressor
-from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
-import math, time
+import time
 from datetime import timedelta
 from tqdm.auto import tqdm
 from typing import IO, Callable, List
 import xgboost as xgb
 import numpy as np, pandas as pd, matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-from matplotlib.container import StemContainer
 import matplotlib.colors as mcolors
-import matplotlib; matplotlib.use('QtAgg')
+# import matplotlib; matplotlib.use('QtAgg')
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
-from collections.abc import Iterable
+from collections.abc import Iterable, Hashable
 from torch.utils.data import TensorDataset, DataLoader
 import numpy as np, pandas as pd
 import torch
@@ -502,6 +498,301 @@ def apply_slice(iter, *slicer, along_dim: int=0, return_format: str='2d', flat_o
 			return [x for row in result for x in row]
 		else:  # "col", "colum-major"
 			return [result[r][c] for c in range(len(result[0])) for r in range(len(result))]
+def sythesize_dataset(NoiseScale=0.075):
+	def AddNoise(df,Pt,col,scale,ceil=1,floor=0):
+		Noise=np.random.normal(scale=scale, size=df[col].shape)
+		col=df.columns.get_loc(col)
+		for i in range(1, len(Pt)):  # Começamos de 1 para termos um intervalo de t[i-1] a t[i]
+			start = df.index.get_loc(Pt[i-1])  # Índice do início do trecho
+			stop = df.index.get_loc(Pt[i])-1  # Índice do final do trecho
+
+			c = df.iloc[start:stop, col]
+			r = Noise[start:stop]
+			val = c + r
+			
+			val_max=max(val)
+			if ceil is not None and val_max > ceil:
+				idmax = val.tolist().index(val_max)
+				CorrectionFactor = (ceil - c.iloc[idmax]) / r[idmax]
+			else: CorrectionFactor = 1
+				# Aplicar o fator de correção no ruído do trecho
+			df.iloc[start:stop, col] = df.iloc[start:stop, col] + r * CorrectionFactor
+			if floor is not None: df.iloc[start:stop, col] = df.iloc[start:stop, col].clip(lower=0)
+	def SynthCPUpercent(Pt, Pcpu, NoiseScale=0.075, TimeArrayParams=dict(tol=0.0001,MinStep=0.01,MinPoints=501,MaxPoints=3001)):
+		def _frange(start,stop,**kwargs):
+			opcoes={'step','num'}
+			arg = opcoes.intersection(kwargs.keys())
+			if len(arg) != 1:
+				raise ValueError("Exatamente um dos argumentos 'step' ou 'num' deve ser passado.")
+				
+			from math import floor, log10
+			if stop<start:
+				aux=stop
+				stop=start
+				start=aux
+
+			arg=arg.pop()
+			match arg:
+				case 'step':
+					step = kwargs['step']
+
+					# Calcula a ordem de grandeza para os cálculos
+					gr=10**floor(log10(step))
+					# Converte os argumentos para números inteiros
+					iStart=start/gr
+					iStep=step/gr
+					iStop=stop/gr
+
+					# Constrói o vetor
+					NumElem=floor((iStop-iStart)/iStep)+1
+					array=np.zeros(NumElem)
+					num=iStart
+					for i in range(NumElem):
+						array[i]=num*gr
+						num+=iStep
+
+					return array
+				case 'num':
+					num = kwargs['num'] - 1
+					delta = (stop-start)/num
+					
+					array = start+np.array(range(num+1))*delta
+					return array
+		def _GenerateTimeArray(t, tol, MinStep, MinPoints, MaxPoints):
+			"""
+			Para o intervalo [min(t), max(t)], tenta encontrar um vetor de tempos com número de pontos
+			variando de min_points até max_points que satisfaça:
+				1. Um passo constante, com valor >= min_step.
+				2. Cada valor em t apareça no vetor (dentro de tol * max(1, |ti|)).
+			
+			Se encontrado, 'snap' os valores para que sejam exatamente t; caso contrário, levanta um erro.
+			
+			Parâmetros:
+				- t: lista ou array de números (em ordem crescente) que devem aparecer no vetor final.
+				- min_step: valor mínimo permitido para o passo entre os pontos.
+				- tol: tolerância para considerar que um valor gerado é igual a um valor em t.
+				- min_points: número mínimo de pontos a tentar.
+				- max_points: número máximo de pontos permitidos no vetor.
+			"""
+			# Bloco de validação dos argumentos
+			if not isinstance(t, (list, tuple, np.ndarray)):
+				raise ValueError("t deve ser uma lista, tupla ou numpy array.")
+			if len(t) == 0:
+				raise ValueError("t não pode ser vazio.")
+			# Verifica se todos os elementos de t são numéricos
+			for ti in t:
+				if not isinstance(ti, (int, float)):
+					raise ValueError("Todos os elementos em t devem ser números.")
+			# Verifica se os valores de t estão em ordem crescente
+			if any(t[i] > t[i+1] for i in range(len(t)-1)):
+				raise ValueError("Os valores em t devem estar em ordem crescente.")
+			
+			if not (isinstance(MinStep, (int, float)) and MinStep > 0):
+				raise ValueError("min_step deve ser um número positivo.")
+			if not (isinstance(tol, (int, float)) and tol >= 0):
+				raise ValueError("tol deve ser um número não negativo.")
+			if not (isinstance(MinPoints, int) and MinPoints > 0):
+				raise ValueError("min_points deve ser um inteiro positivo.")
+			if not (isinstance(MaxPoints, int) and MaxPoints >= MinPoints):
+				raise ValueError("max_points deve ser um inteiro maior ou igual a min_points.")
+			if MinPoints < len(t):
+				raise ValueError("min_points deve ser pelo menos o número de valores em t.")
+			
+			start = min(t)
+			stop = max(t)
+			if (stop - start) / (MinPoints - 1) < MinStep:
+				raise ValueError("Parâmetros conflitantes: usando min_points pontos, o step resultante é menor que min_step.")    # Fim da validação dos argumentos
+
+			found = False
+			candidate_time_vec = None
+
+			for n in range(MinPoints, MaxPoints + 1):
+				# O passo candidato, se usarmos n pontos, seria:
+				candidate_step = (stop - start) / (n - 1)
+				if candidate_step < MinStep:
+					# Se o step resultante for menor que o mínimo, esse candidato é inválido
+					continue
+				# Gera o vetor usando a opção 'num' de frange (garante exatamente n pontos)
+				time_vec = _frange(start, stop, num=n)
+				# Verifica se cada valor em t está presente (dentro da tolerância)
+				all_found = True
+				for ti in t:
+					if np.abs(time_vec - ti).min() > tol * max(1, abs(ti)):
+						all_found = False
+						break
+				if all_found:
+					# "Snap": força os valores que estão dentro da tolerância a serem exatamente t
+					candidate_time_vec = time_vec.copy()
+					for ti in t:
+						idx = np.argmin(np.abs(candidate_time_vec - ti))
+						if np.abs(candidate_time_vec[idx] - ti) <= tol * max(1, abs(ti)):
+							candidate_time_vec[idx] = ti
+					found = True
+					break
+
+			if not found:
+				raise ValueError(
+					f"Não foi possível encontrar um vetor de tempos que inclua todos os valores de t (dentro da tolerância {tol}) "
+					f"usando entre {MinPoints} e {MaxPoints} pontos e com step >= {MinStep}."
+				)
+			return candidate_time_vec
+		def GenerateDF(t,CPU,TimeArrayParams):
+			# Gera um DataFrame que contém os dados listados
+			if TimeArrayParams is None:
+				TimeArrayParams = {'min_step': 0.1, 'tol': 1e-8, 'min_points': 50, 'max_points': 200}
+			
+			aux=_GenerateTimeArray(t, **TimeArrayParams)
+			df=pd.DataFrame(data={'t':aux,
+								'CPU':np.zeros(len(aux)),
+							})
+			# Alimenta valores do vetor CPU em df, nas posições especificadas em t
+			ind = df.loc[df['t'].isin(t)].index[:len(CPU)]
+			df.loc[ind, 'CPU'] = CPU[:len(ind)]
+
+			# Preenche valores de df
+			t_stop = t[-2]  # Penúltimo valor de t
+
+			last_value = None
+			for i in reversed(df.index):  # Percorre de trás para frente
+				if i in ind:
+					last_value = df.at[i, 'CPU']  # Atualiza o último valor encontrado
+				elif last_value is not None and df.at[i, 't'] > t_stop:
+					df.at[i, 'CPU'] = last_value  # Replica o valor
+			last_value = None
+			for i in df.index:  # Percorre do início ao fim
+				if i in ind:
+					last_value = df.at[i, 'CPU']  # Atualiza o último valor encontrado
+				elif last_value is not None and df.at[i, 't'] <= t_stop:
+					df.at[i, 'CPU'] = last_value  # Replica o valor
+
+			df['t_mod'] = df['t']  # Cria uma nova coluna para armazenar o t ajustado
+			pt_idx = 0  # Índice para percorrer o vetor Pt
+			for i in range(len(df)):
+				while pt_idx < len(Pt) - 1 and df.loc[i, 't'] >= Pt[pt_idx + 1]:  
+					pt_idx += 1  # Atualiza o índice para o próximo intervalo
+				df.loc[i, 't_mod'] = df.loc[i, 't'] - Pt[pt_idx]  # Ajusta t conforme Pt
+			df.iloc[-1,-1]=df.iloc[-2,-1]+(df.iloc[-2,-1]-df.iloc[-3,-1])
+			df=df.rename(columns={'t':'Timestamp'})
+			df=df.set_index('Timestamp')
+			# df=df.rename(columns={'t_mod':'t'})
+			return df.drop(columns=['t_mod'])
+		
+
+		df = GenerateDF(Pt,Pcpu,TimeArrayParams)
+		AddNoise(df,Pt,'CPU',NoiseScale)
+
+		return df
+	def SimulateTmep(df: pd.DataFrame,KCPU=4,KTemp=0.1,TauCPU=0.1,TauTemp=0.05, temp_ext: float=None):
+		from math import exp
+
+		if temp_ext is None: temp_ext = 0
+		if 'Temp' not in df.columns: df['Temp'] = float(temp_ext)
+
+		idx=df.columns.get_loc('CPU')
+		idy=df.columns.get_loc('Temp')	
+
+		temp_ext=df.iloc[0,idy]
+		Dt=df.index[1]-df.index[0]
+		for i in range(1,len(df)):
+			temp_current=df.iloc[i-1,idy]
+			cpu_current=df.iloc[i,idx]
+			BETA_CPU = 1 - np.exp(-Dt/TauCPU)
+			BETA_TEMP = 1 - np.exp(-Dt/TauTemp)
+
+			FCPU = lambda cpu: cpu**2
+			FTEMP = lambda temp_current, temp_ext: temp_current-temp_ext
+			DeltaTempFromCPU  = KCPU * FCPU(cpu_current) * BETA_CPU
+			DeltaTempFromTemp = KTemp * FTEMP(temp_current, temp_ext) * BETA_TEMP
+
+			TempNext = temp_current + DeltaTempFromCPU - DeltaTempFromTemp
+				
+			df.iloc[i,idy]=float(TempNext)
+
+		return df
+
+	Pt   = [0  ,    10 ,    12  ,   15  ,   21  ,   30  ]       # Times
+	Pcpu = [0.4,    0.3,    0.98,   0.21,   0.61,   0.61]       # Values
+	df=SynthCPUpercent(Pt,Pcpu, NoiseScale=NoiseScale)									# Create a %CPU dataframe
+	df=SimulateTmep(df,temp_ext=40)								# Calculate temperature values	
+	AddNoise(df,Pt,'Temp',scale=1,ceil=None, floor=None)
+
+	return df
+def PlotSim(df, offset_sec_axis=30, fontsize_sec_axis=12, hide_sec_axis_line=False, offset_xlabel=50, fontsize_axis_labels=20, fontsize_ticklabels=16, save=None):
+	import matplotlib.pyplot as plt
+	import matplotlib.ticker as mticker
+	from mpl_toolkits.axes_grid1 import host_subplot
+	import mpl_toolkits.axisartist as AA
+
+	t=df.index
+	# Cria a figura e os eixos host e parasite
+	plt.figure(figsize=(10, 5))
+	host = host_subplot(111, axes_class=AA.Axes)
+	parasite = host.twinx()
+	parasite.axis["right"].toggle(all=True)		# Força a exibição do eixo direito do parasite (necessário com axisartist)
+	host.set_zorder(2)							# Host (temperatura) acima
+	parasite.set_zorder(1)						# Parasite (CPU) abaixo
+	parasite.patch.set_visible(False)
+
+
+	# Plots
+	host.plot('Temp', data=df, linewidth=2, label='Resposta da temperatura', zorder=4)
+	parasite.plot('CPU', data=df, linewidth=0.9, color='orange', label='Degraus da %CPU', zorder=3)
+
+
+	# Eixo %CPU
+	parasite.set_ylim(0, 1)
+	parasite.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, pos: f'{x*100:.0f}'))
+
+
+	# Eixo X secundário para os valores de t
+	secax = host.secondary_xaxis('bottom')
+	secax.set_xticks(t)
+	secax.spines['bottom'].set_position(('outward', offset_sec_axis))
+	secax.spines['bottom'].set_visible(not hide_sec_axis_line)
+	sec_tick_labels = [rf'$t_{{{i}}} = {t_val:.1f}$' for i, t_val in enumerate(t)]
+	secax.set_xticklabels(sec_tick_labels, fontsize=fontsize_sec_axis)
+	secax.tick_params(axis='x', length=5, width=1, labelsize=fontsize_sec_axis)
+	# for t_val in t:     parasite.axvline(x=t_val, color='#a0a0a0', linestyle='--', linewidth=1, zorder=2)   # Linhas verticais para cada valor de t
+
+
+	# Axis labels
+	host.axis["bottom"].label.set_text(r'Tempo $[s]$')
+	host.axis["bottom"].label.set_fontsize(fontsize_axis_labels)
+	host.axis["bottom"].label.set_pad(offset_xlabel)
+	host.axis["left"].label.set_text(r'Temperatura $[°C]$')
+	host.axis["left"].label.set_fontsize(fontsize_axis_labels)
+	parasite.axis["right"].label.set_text(r'Utilização da CPU $[\%]$')
+	parasite.axis["right"].label.set_fontsize(fontsize_axis_labels)
+
+
+	# Tick labels
+	host.axis["left"].major_ticklabels.set_fontsize(fontsize_ticklabels)
+	host.axis["bottom"].major_ticklabels.set_fontsize(fontsize_ticklabels)
+	parasite.axis["right"].major_ticklabels.set_fontsize(fontsize_ticklabels)
+
+
+	# Fundo e grid
+	host.set_facecolor('#fafafa')
+	host.set_axisbelow(True)
+	parasite.set_axisbelow(True)
+	host.grid(which='major', color='#e0e0e0', linewidth=1.5)					# Major grid para o eixo X e Y do host
+	host.xaxis.grid(True, which='major', color='#e0e0e0', linewidth=1.5)		# Força o grid major no eixo X do host
+
+
+	# Legenda
+	handles_host, labels_host = host.get_legend_handles_labels()
+	handles_par, labels_par = parasite.get_legend_handles_labels()
+	legend_dict = {}
+	for h, l in zip(handles_host + handles_par, labels_host + labels_par):	legend_dict[l] = h
+	host.legend(list(legend_dict.values()), list(legend_dict.keys()), loc='upper left', fontsize=fontsize_axis_labels)
+
+
+	if save is not None: plt.savefig(save, bbox_inches='tight')
+	plt.show(block=False)
+	return
+
+
+
 class Param:
 	from numbers import Number
 	import weakref
@@ -1211,18 +1502,148 @@ class FunctionWrapper(ABC):
 
 
 class DDS(BaseEstimator, RegressorMixin):
-	def __init__(self, tel: pd.DataFrame, input_col: str, highcpudetector, M1, M2, M3):
-		"""
-			:param: tel: DataFrame containing the data to be analyzed.
-			:param: col: Column name in the DataFrame that contains the CPU usage data.
-		"""
-		self.tel=tel
-		if not input_col in tel.columns: raise ValueError(f"Column '{input_col}' not found in passed DataFrame.")
-		self.input_col=input_col
-		self.highcpudetector=highcpudetector
-		self.M1=M1
-		self.M2=M2
-		self.M3=M3
+	def fit(self, df: pd.DataFrame, plot_map: dict, **kwargs):
+		if not isinstance(df, pd.DataFrame): raise TypeError("df must be a DataFrame")
+		# Segment dataset
+		_, segmentation_summary = self.segmenter(df, **kwargs)
+
+		self.models_in_pipe = set()
+		# TODO: for now, train models with data from only the first segment where they are required. In general, the user may want to fit fusing data from multiple segments; research possible strategies
+		trained_models = []
+		step_outputs=[]
+		for seg, segment in enumerate(segmentation_summary):
+			segment_df = df.iloc[segment['pos_first']:segment['pos_last']]
+			segment_dict={col: segment_df[col].to_numpy() for col in segment_df.columns}
+			step_outputs.append([])
+			for step, step_dict in enumerate(self.state_pipe_mapping[segment['state']]):
+				X = {key:value for key,value in segment_dict.items() if key in step_dict['X']}
+				current_seg_merged_outputs = {}
+				for out in step_outputs[seg]: current_seg_merged_outputs |= out
+				X_mat = np.column_stack([(X|current_seg_merged_outputs)[col] for col in step_dict['X']])
+				if not callable(step_dict['op']):
+					self.models_in_pipe.add(step_dict['op']) # set.add automatically rejects repeats
+					if step_dict['op'] not in trained_models:
+						y = (segment_dict|current_seg_merged_outputs)[step_dict['y']]
+						fn = step_dict['op'].fit
+						fn(X_mat,y,y0=y[0], plot=plot_map[fn]['plot'])
+						trained_models.append(step_dict['op'])
+					fn = step_dict['op'].predict
+					fn_ret = fn(X_mat,y0=y[0], plot = plot_map[fn]['plot'], against = (segment_dict|current_seg_merged_outputs)[plot_map[fn]['against']])
+					step_outputs[seg].append({step_dict['ret']:fn_ret})
+				else:
+					args = [(X|current_seg_merged_outputs)[col] for col in step_dict['X']]
+					out = step_dict['op'](*args)
+					step_outputs[seg].append({step_dict['ret']: np.asarray(out)})
+		
+		self._trained = True
+	def predict(self, df: pd.DataFrame, plot_map: dict, **kwargs):
+		if not isinstance(df, pd.DataFrame): raise TypeError("df must be a DataFrame")
+		assert self._trained, "predict must be called after fitting"
+		# Segment dataset
+		_, segmentation_summary = self.segmenter(df, **kwargs)
+
+		# TODO: for now, train models with data from only the first segment where they are required. In general, the user may want to fit fusing data from multiple segments; research possible strategies
+		step_outputs=[]
+		all_cols = []
+		for seg, segment in enumerate(segmentation_summary):
+			segment_df = df.iloc[segment['pos_first']:segment['pos_last']]
+			segment_dict={col: segment_df[col].to_numpy() for col in segment_df.columns}
+			step_outputs.append([])
+			for step, step_dict in enumerate(self.state_pipe_mapping[segment['state']]):
+				X = {key:value for key,value in segment_dict.items() if key in step_dict['X']}
+				current_seg_merged_outputs = {}
+				for out in step_outputs[seg]: current_seg_merged_outputs |= out
+				X_mat = np.column_stack([(X|current_seg_merged_outputs)[col] for col in step_dict['X']])
+				if not callable(step_dict['op']):
+					if seg==0: y_hat0 = None 
+					else:
+						previous_seg_merged_outputs = {}
+						for out in step_outputs[seg-1]: previous_seg_merged_outputs |= out
+						y_hat0 = previous_seg_merged_outputs[self.predict_col][0]
+					fn = step_dict['op'].predict
+					fn_ret = fn(X_mat,y0=y_hat0, plot = plot_map[fn]['plot'], against = (segment_dict|current_seg_merged_outputs)[plot_map[fn]['against']])
+					step_outputs[seg].append({step_dict['ret']:fn_ret})
+				else:
+					args = [(X|current_seg_merged_outputs)[col] for col in step_dict['X']]
+					out = step_dict['op'](*args)
+					step_outputs[seg].append({step_dict['ret']: np.asarray(out)})
+				if step_dict['ret'] not in all_cols: all_cols.append(step_dict['ret'])
+		if self.predict_col in all_cols: all_cols.remove(self.predict_col)
+		all_cols.append(self.predict_col)
+	
+		out_df = pd.DataFrame(np.nan, index=df.index, columns=all_cols)
+		for seg,segment in enumerate(segmentation_summary):
+			pos0,pos1=segment['pos_first'],segment['pos_last']
+			idx = df.index[pos0:pos1]
+			merged={}
+			for out in step_outputs[seg]: merged|=out
+			for col,val in merged.items():
+				arr = np.asarray(val).ravel()
+				if arr.shape[0] != len(idx): raise ValueError(f"length mismatch for col {col}: {arr.shape[0]} vs {len(idx)}")
+				out_df.loc[idx, col] = arr
+		df_out_segments = [
+			out_df.iloc[seg['pos_first']:seg['pos_last']]
+			for seg in segmentation_summary
+		]
+
+		return out_df, segmentation_summary, df_out_segments
+
+	@staticmethod
+	def _validate_pipeline(pipe):
+		if isinstance(pipe, dict): pipe = [pipe]
+		if not isinstance(pipe, list): raise TypeError('pipe must be a list')
+		if not len(pipe) > 0: raise ValueError("pipe must have at least one element")
+		valid = {X:='X',y:='y',op:='op',ret:='ret'}
+		for ss, step in enumerate(pipe):
+			if not isinstance(step, dict): raise TypeError(f"Found non-dict element in step {ss}: {step}")
+			if not (unrec:=set(step.keys())-valid)==set(): raise KeyError(f"Found unrecognized keys in step {ss}: {unrec}")
+			INVALID_COLUMN_NAME_MSG = "Found invalid column name for key '{key}' in step {ss}: {value}"
+			op_is_callable = callable(step[op])
+			op_has_fit_and_predict = hasattr(step[op], 'fit') and callable(getattr(step[op], 'fit')) and hasattr(step[op], 'predict') and callable(getattr(step[op], 'predict'))
+			if op_is_callable:
+				if step[y] is not None: raise ValueError(f"Found not None item for key '{y}' in step {ss} with callable operator. Must be None in this case")
+				if not isinstance(step[X], Iterable) or isinstance(step[X], (str,bytes)): step[X]=[step[X]]
+				step[X] = tuple(step[X])
+			elif op_has_fit_and_predict:
+				if step[y] is None: raise ValueError(f"Found None item for key '{y}' in step {ss} with operator with fit and predict methods. Must not be a valid column name in this case")
+				if not isinstance(step[y], Hashable): raise ValueError(INVALID_COLUMN_NAME_MSG.format(key=y, ss=ss, value=step[y]))
+				if not isinstance(step[X], Iterable) or isinstance(step[X], (str,bytes)): step[X]=[step[X]]
+			else: raise TypeError(f"Operator in step {ss} is neither callable nor has fit and predict methods")
+			for name in step[X]:
+				if not isinstance(name, Hashable): raise ValueError(INVALID_COLUMN_NAME_MSG.format(key=X, ss=ss, value=name))
+			if not isinstance(step[ret], Hashable): raise ValueError(INVALID_COLUMN_NAME_MSG.format(key=ret, ss=ss, value=step[ret]))
+		return pipe
+	def __init__(self, predict_col: Hashable, temp_amb: float, segmenter: tuple, state_pipe_mapping: dict):
+		# # Prediction column name validation
+		if not isinstance(predict_col, Hashable): raise TypeError("target_col must be hashable")
+		self.predict_col = predict_col
+
+		# Overheating detector validation
+		if not isinstance(segmenter, tuple): raise TypeError(f"segmenter must be a tuple")
+		if not len(segmenter) == 2: raise ValueError(f"segmenter must be a 2-tuple with a callable an a column name for df")
+		if not isinstance(col:=segmenter[0], Hashable): raise TypeError(f"The first element in segmenter must be a single column name. {col} is not a valid column name")
+		if not callable(fn:=segmenter[1]): raise TypeError(f"The second element in segmenter must be a callable")
+		test_df = pd.DataFrame(data={'x':[0]*10})
+		try:
+			if not isinstance(ret:=fn(test_df,'x'), tuple): raise ValueError(f"segmenter function must return a 2-tuple")
+		except TypeError as e:
+			raise TypeError(f"segmenter function must take a DataFrame and a str as arguments. Test run raised: \n{e}")
+		if not isinstance(ret[0],list): raise ValueError("segmenter function's return 1 must be a list containing integer indexes pointing to change points")
+		UNEXPECTED_SEGMENTATION_FORMAT_MSG = "segmenter function's return 2 must be a list of dicts summarizing segmentation. See documentation for expected format"
+		if not isinstance(ret[1],list): raise ValueError(UNEXPECTED_SEGMENTATION_FORMAT_MSG)
+		if not isinstance(ret[1][0],dict): raise ValueError(UNEXPECTED_SEGMENTATION_FORMAT_MSG)
+		if not (unrec:=set(ret[1][0].keys())-{'state','pos_first','pos_last','avg'})==set(): raise KeyError(f"Found unrecognized keys in segment dict: {unrec}"+UNEXPECTED_SEGMENTATION_FORMAT_MSG)
+		self.segmenter = lambda df, **kwargs: fn(df, col, **kwargs)
+
+		# Validate pipelines
+		if any(invalid:=[not isinstance(state, str) for state in state_pipe_mapping.keys()]): raise TypeError(f"Found non-str state names: {invalid}")
+		for state, pipe in state_pipe_mapping.items():
+			try: state_pipe_mapping[state]=DDS._validate_pipeline(pipe)
+			except (ValueError, TypeError, AssertionError) as e: raise type(e)(f"Error validating normal_pipe: {e}") from e
+		self.state_pipe_mapping = state_pipe_mapping
+
+
+		self._trained = False
 
 class M1(BaseEstimator, RegressorMixin):
 	def get_model_params(self):
@@ -1230,15 +1651,17 @@ class M1(BaseEstimator, RegressorMixin):
 		:return: The parameters of this model.
 		"""		
 		return self._kernel._params
-	def fit(self, X, y, plot = True):
+	def fit(self, X, y, plot = True, y0: float=None):
 		"""
 		Orchestrates the training process by validating inputs and coordinating the kernel and optimizer.
 		:param X: Input features.
 		:param y: Target values.
 		"""
 		X, y = check_X_y(X, y)
-		self._optimizer.fit(X, y, plot)
-	def predict(self, X, plot = True, against=[]):
+		from numbers import Real
+		if y0 is not None and not isinstance(y0, Real): raise TypeError("temp0 must be a float-like")
+		self._optimizer.fit(X, y, plot, temp0=y0)
+	def predict(self, X, plot = True, against=[], y0: float=None):
 		"""
 		Predicts the target values using the trained model.
 		:param X: Input features.
@@ -1247,7 +1670,9 @@ class M1(BaseEstimator, RegressorMixin):
 		"""
 		X = check_array(X, ensure_2d=False, dtype=float)
 		if self._optimizer._training_finished:
-			pred = self._kernel.predict(X)
+			from numbers import Real
+			if y0 is not None and not isinstance(y0, Real): raise TypeError("temp0 must be a float-like")
+			pred = self._kernel.predict(X, y0)
 			if plot: self._optimizer.plotter.plot_prediction(y_true=against, y_pred=pred)
 			return pred
 		else:
@@ -1307,7 +1732,7 @@ class DelayRegressionStrategy(FunctionWrapper):
 		return self._params.to_dict(Param.Utils.FLAG_PRESCRIBED)
 	def guess_params(self) -> dict:
 		return self._params.guess(inplace=False)
-	def predict(self, X) -> List:
+	def predict(self, X, y0: float=None) -> List:
 		r"""
 		Calculates a prediction series using the parrameters currently saved in the object.
 
@@ -1320,7 +1745,8 @@ class DelayRegressionStrategy(FunctionWrapper):
 		wi = np.array([value for key, value in params.items() if key != 'delay'])
 
 		X_proc = np.vectorize(self.FCPU)(X)  # transforma X inteiro
-		y_hat = np.full(len(X), self._temp0)
+		if y0 is None: y0 = self._temp0
+		y_hat = np.full(len(X), y0)
 		y_hat[delay+1:] = X_proc[delay+1:,:] @ wi
 		return y_hat
 	def __init__(self, FCPU: callable, temp0: float, params: Param):
@@ -1572,7 +1998,7 @@ class DelayRegressionOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		self._best_training_iter = self.current_iteration
 	def get_best_model(self):
 		return self._best_model_params, self._best_score, self._best_training_iter
-	def fit(self, X, y, plot = True):
+	def fit(self, X, y, plot = True, temp0: float=None):
 		"""
 		Fits the model by iterating over M2Kernel parameters.
 		:param X: Input features.
@@ -1592,7 +2018,7 @@ class DelayRegressionOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		pbar, progress = self._start_pbar();	self._training_start_time = (last := time.time())
 		while not self.training_stop_condition(self):
 			now = time.time()
-			params = self.optimize(delays[self.current_iteration], X, y)
+			params = self.optimize(delays[self.current_iteration], X, y, temp0)
 
 			self._model._kernel.set_model_parameters(params)
 
@@ -1627,7 +2053,7 @@ class DelayRegressionOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		self._current_prediction = self._model._kernel.predict(X)
 		rmse = SCORE_FUNCTION(y, self._current_prediction)
 		return -rmse
-	def optimize(self, delay: int, X, y) -> dict:
+	def optimize(self, delay: int, X, y, temp0: float=None) -> dict:
 			"""
 			Implements a single step of Stochastic Gradient Descent (SGD) to calculate the next set of candidate parameters.
 			:param dict: Current parameters of the M2Kernel as a dict.
@@ -1635,7 +2061,8 @@ class DelayRegressionOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			"""
 
 			x0 = X[0, :]
-			y0 = self._model._kernel._temp0
+			if temp0 is None: temp0 = self._model._kernel._temp0
+			y0 = temp0
 			X = np.vectorize(self._model._kernel.FCPU)(X[delay+1:,:])
 			y = y[:-delay-1]
 			w0 = np.linalg.lstsq(X, y, rcond=None)[0]
@@ -1758,15 +2185,17 @@ class M2(BaseEstimator, RegressorMixin):
 		:return: The parameters of this model.
 		"""		
 		return self._kernel._params
-	def fit(self, X, y, plot = True):
+	def fit(self, X, y, plot = True, y0: float=None):
 		"""
 		Orchestrates the training process by validating inputs and coordinating the kernel and optimizer.
 		:param X: Input features.
 		:param y: Target values.
 		"""
 		X, y = check_X_y(X, y)
-		self._optimizer.fit(X, y, plot)
-	def predict(self, X, plot = True, against=[]):
+		from numbers import Real
+		if y0 is not None and not isinstance(y0, Real): raise TypeError("temp0 must be a float-like")
+		self._optimizer.fit(X, y, plot, y0)
+	def predict(self, X, plot = True, against=[], y0: float=None):
 		"""
 		Predicts the target values using the trained model.
 		:param X: Input features.
@@ -1775,7 +2204,9 @@ class M2(BaseEstimator, RegressorMixin):
 		"""
 		X = check_array(X, ensure_2d=False, dtype=float)
 		if self._optimizer._training_finished:
-			pred = self._kernel.predict(X)
+			from numbers import Real
+			if y0 is not None and not isinstance(y0, Real): raise TypeError("temp0 must be a float-like")
+			pred = self._kernel.predict(X, y0)
 			if plot: self._optimizer.plotter.plot_prediction(y_true=against, y_pred=pred)
 			return pred
 		else:
@@ -1868,7 +2299,7 @@ class FirstOrderStrategy(FunctionWrapper):
 		DeltaTempFromTemp = KTEMP * FTEMP(temp_current, temp_ext) * BETA_TEMP
 
 		return temp_current + DeltaTempFromCPU - DeltaTempFromTemp
-	def predict(self, X) -> List:
+	def predict(self, X, temp0: float=None) -> List:
 		r"""
 		Calculates a prediction series using the parrameters currently saved in the object.
 
@@ -1877,12 +2308,13 @@ class FirstOrderStrategy(FunctionWrapper):
 		"""			
 		# X = check_array(X, ensure_2d=False, dtype=float)
 		X = X.ravel()
-		pred = [self._temp0] * len(X)
+		if temp0 is None: temp0 = self._temp0
+		pred = [temp0] * len(X)
 		for cc, cpu in enumerate(X[1:], start=1):
-			pred[cc] = self._next_temp(cpu, pred[cc-1], self._temp0)
+			pred[cc] = self._next_temp(cpu, pred[cc-1], self._temp_amb)
 		return pred
 
-	def __init__(self, FCPU: callable, FTEMP: callable, temp0: float,  params: Param, noise_level=0):	# Dt test value was Dt = 30/510.0
+	def __init__(self, FCPU: callable, FTEMP: callable, temp0: float, temp_amb: float, params: Param, noise_level=0):	# Dt test value was Dt = 30/510.0
 		r"""
 		Instantiates the M2Kernel object
 
@@ -1902,6 +2334,7 @@ class FirstOrderStrategy(FunctionWrapper):
 		self.FCPU = FCPU
 		self.FTEMP = FTEMP
 		self._temp0 = temp0
+		self._temp_amb = temp_amb
 		self.noise_level = noise_level
 
 		if not isinstance(params, Param): raise TypeError('params must be a Param object')
@@ -2131,7 +2564,7 @@ class FirstOrderOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		self._best_training_iter = self.current_iteration
 	def get_best_model(self):
 		return self._best_model_params, self._best_score, self._best_training_iter
-	def fit(self, X, y, plot = True):
+	def fit(self, X, y, plot = True, temp0: float=None):
 		"""
 		Fits the model by iterating over M2Kernel parameters.
 		:param X: Input features.
@@ -2143,7 +2576,7 @@ class FirstOrderOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		self.iterations_on_this_path = 0
 		self._reset_history()
 		self._set_best_model()
-
+		self._temp0 = temp0
 		# Initialize progress bar and progress functions. Feed training time across iterations to the progress function
 		pbar, progress = self._start_pbar();			last = time.time(); self._training_start_time = last
 
@@ -2189,7 +2622,7 @@ class FirstOrderOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		:param y: Target values.
 		:return: Negative RMSE (to align with sklearn's maximization convention).
 		"""
-		self._current_prediction = self._model._kernel.predict(X)
+		self._current_prediction = self._model._kernel.predict(X, self._temp0)
 		rmse = SCORE_FUNCTION(y, self._current_prediction)
 		return -rmse
 	def optimize(self, params: dict) -> dict:
@@ -2317,6 +2750,226 @@ class FirstOrderOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			if hasattr(self, key): setattr(self, key, value)
 		return self
 
+class M3(BaseEstimator, RegressorMixin):
+	class Plotter:
+		def plot_crossvalidation(self, y_tests, y_preds, scores, fold_indices):
+			def sanitize_plotstyle(ps: PlotStyle) -> PlotStyle:
+				if ps is None: ps = get_plotstyle('')
+				def _is_valid_figsize_callable(obj):
+					try:
+						if not callable(obj): return False
+						result = obj(1)
+						return (
+							isinstance(result, tuple)
+							and len(result) == 2
+							and all(isinstance(x, (int, float)) for x in result)
+						)
+					except Exception:
+						return False
+				if not _is_valid_figsize_callable(ps.multiple_figsize):
+					ps.multiple_figsize = None
+				if not isinstance(ps.reference_plot_options, dict):
+					ps.reference_plot_options = {}
+				if not isinstance(ps.prediction_plot_options, dict):
+					ps.prediction_plot_options = {}
+				if not mcolors.is_color_like(ps.facecolor):
+					ps.facecolor = None
+				if not isinstance(ps.grid_options, list):
+					ps.grid_options = []
+				if not (isinstance(ps.annotate_fontsize, (int,float)) and ps.annotate_fontsize > 0):
+					ps.annotate_fontsize = None
+				if not (isinstance(ps.legend_fontsize, (int,float)) and ps.legend_fontsize > 0):
+					ps.legend_fontsize = None
+				if not (isinstance(ps.tick_label_fontsize, (int,float)) and ps.tick_label_fontsize > 0): 
+					ps.tick_label_fontsize = None
+				if not (isinstance(ps.M3_crossvalidation_filename, str)): 
+					ps.M3_crossvalidation_filename = 'M3_crossvalidation'
+				if not (isinstance(ps.M3_crossvalidation_title, str)): 
+					ps.M3_crossvalidation_title = ''
+				if not (isinstance(ps.save_figure_extension, str)): 
+					ps.save_figure_extension = 'svg'
+				if not (isinstance(ps.savefig_bbox_inches, str)): 
+					ps.savefig_bbox_inches = 'tight'
+				if not (is_valid_font(ps.label_fontfamily)): 
+					ps.label_fontfamily = None
+				if not isinstance(ps.single_figsize,tuple) or len(ps.single_figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.single_figsize]):
+					ps.single_figsize = None
+				if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
+					ps.spine_linewidth = None
+				return ps
+			PS = sanitize_plotstyle(self.plotstyle)
+			n_folds = len(fold_indices)
+			fig, ax = plt.subplots(n_folds, figsize=PS.multiple_figsize(n_folds) )
+			if n_folds == 1: ax = [ax]
+			for ff in fold_indices:
+				ax[ff].plot(y_tests[ff], **PS.reference_plot_options)	# Reference line
+				ax[ff].plot(y_preds[ff], **PS.prediction_plot_options)	# Prediction line
+				ax[ff].set_facecolor(PS.facecolor)
+				for grid_option in PS.grid_options: ax[ff].grid(**grid_option)
+				ax[ff].annotate(f'Fold {ff+1}', xy=(0.01,0.04), xycoords='axes fraction',
+					fontsize=PS.annotate_fontsize, horizontalalignment='left', verticalalignment='bottom')
+				ax[ff].annotate(PS.score_label+f' = {scores[ff]:0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
+					fontsize=PS.annotate_fontsize, horizontalalignment='right', verticalalignment='bottom')
+				ax[ff].legend(loc='lower center', fontsize=PS.legend_fontsize)
+				ax[ff].tick_params(axis='both', labelsize=PS.tick_label_fontsize)
+				if PS.spine_linewidth is not None:
+					for spine in ax[ff].spines.values(): spine.set_linewidth(PS.spine_linewidth)
+			# prints a shared y axis label
+			fig.text(0.05, 0.5, PS.ylabel_temperature_diff, va='center', rotation='vertical', fontsize = PS.label_fontsize, fontname=PS.label_fontfamily)
+			ax[-1].set_xlabel(PS.xlabel_time, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+			PlotStyle.settitle_and_savefig(fig, ax,
+				savefig_options=PlotStyle.compose_savefig_options(
+					fname=PS.M3_crossvalidation_filename, 
+					format=PS.save_figure_extension, 
+					bbox_inches=PS.savefig_bbox_inches
+				),
+				set_title_options=PlotStyle.compose_set_title_options(
+					label=PS.M3_crossvalidation_title, 
+					fontsize=PS.title_fontsize,
+					fontname=PS.label_fontfamily
+				),
+				savefig=PS.M3_crossvalidation_savefig,
+				save_with_title=PS.save_with_title
+			)
+			plt.show(block=True)
+		def plot_prediction(self, y_true, y_pred, **kwargs):
+			"""
+			Plot predictions vs reference for a single fit (full dataset).
+			"""
+			if y_true is not None and len(y_true) != len(y_pred):
+				warnings.warn("y_true and y_pred must have the same length.")
+				return
+			def sanitize_plotstyle(ps: PlotStyle) -> PlotStyle:
+				if ps is None: ps = get_plotstyle('')
+				if not isinstance(ps.reference_plot_options, dict):
+					ps.reference_plot_options = {}
+				if not isinstance(ps.prediction_plot_options, dict):
+					ps.prediction_plot_options = {}
+				if not mcolors.is_color_like(ps.facecolor):
+					ps.facecolor = None
+				if not isinstance(ps.grid_options, list):
+					ps.grid_options = []
+				if not (isinstance(ps.legend_fontsize, (int,float)) or ps.legend_fontsize <= 0):
+					ps.legend_fontsize = None
+				if not (isinstance(ps.tick_label_fontsize, (int,float)) and ps.tick_label_fontsize > 0): 
+					ps.tick_label_fontsize = None
+				if not (isinstance(ps.xlabel_time, str)):
+					ps.xlabel_time = ''
+				if not (isinstance(ps.ylabel_temperature, str)):
+					ps.ylabel_temperature = ''
+				if not (isinstance(ps.M3_partial_prediction_title, str)):
+					ps.M3_partial_prediction_title = ''
+				if not (isinstance(ps.ylabel_temperature_diff, str)):
+					ps.M3_partial_prediction_title = ''
+				if not (isinstance(ps.M3_partial_prediction_filename, str)): 
+					ps.M3_partial_prediction_filename = 'M3_partial_prediction'
+				if not (isinstance(ps.save_figure_extension, str)): 
+					ps.save_figure_extension = 'svg'
+				if not (isinstance(ps.savefig_bbox_inches, str)): 
+					ps.savefig_bbox_inches = 'tight'
+				if not (is_valid_font(ps.label_fontfamily)): 
+					ps.label_fontfamily = None
+				if not isinstance(ps.single_figsize,tuple) or len(ps.single_figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.single_figsize]):
+					ps.single_figsize = None
+				if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
+					ps.spine_linewidth = None
+				return ps
+			PS = sanitize_plotstyle(self.plotstyle)
+
+			fig, ax = plt.subplots(1, figsize=PS.single_figsize)
+			if isinstance(y_true, pd.Series): x = y_true.index
+			else: x = range(len(y_true))
+			if y_true is not None: ax.plot(x, y_true, **PS.reference_plot_options)		# Reference line
+			ax.plot(x, y_pred, **PS.prediction_plot_options)	# Prediction line
+			ax.set_facecolor(PS.facecolor)
+			for grid_option in PS.grid_options: ax.grid(**grid_option)
+			ax.set_xlabel(PS.xlabel_time, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+			ylabel = PS.ylabel_temperature_diff or PS.ylabel_temperature
+			ax.set_ylabel(ylabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+			ax.legend(fontsize=PS.legend_fontsize)
+			ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)
+			ax.annotate(PS.score_label+f' = {SCORE_FUNCTION(y_true,y_pred):0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
+				fontsize=PS.annotate_fontsize, horizontalalignment='right', verticalalignment='bottom')
+			if PS.spine_linewidth is not None:
+				for spine in ax.spines.values(): spine.set_linewidth(PS.spine_linewidth)
+			PlotStyle.settitle_and_savefig(fig, ax,
+				savefig_options=PlotStyle.compose_savefig_options(
+					fname=PS.M3_partial_prediction_filename, 
+					format=PS.save_figure_extension, 
+					bbox_inches=PS.savefig_bbox_inches
+				),
+				set_title_options=PlotStyle.compose_set_title_options(
+					label=PS.M3_partial_prediction_title, 
+					fontsize=PS.title_fontsize,
+					fontname=PS.label_fontfamily
+				),
+				savefig=PS.M3_partial_prediction_savefig,
+				save_with_title=PS.save_with_title
+			)
+			plt.show(block=True)
+
+		def __init__(self, plotstyle: PlotStyle = None):
+			self.plotstyle = plotstyle
+	def fit(self, X, y, plot=True, split_units='%', test_size=20, gap_size=0, **kwargs):
+		# Plotting functionality is still not implemented
+		prefit_dict = {}
+		if not self.strategy.defer_split:
+			if not self.strategy.prefit_context['from_xval']:
+				train_idx, test_idx = compose_dataset_splitter(split_units,test_size,gap_size)(X, y, 1)
+				self.strategy.prefit_context.update({
+					'train_idx': train_idx,
+					'test_idx': test_idx,
+					'X': X,
+					'y': y,
+					})
+			prefit_dict = self.strategy.prefit(X, y, **kwargs)
+		self.strategy.fit(X, y, **(({k: v for k, v in kwargs.items() if k != 'y0'}) | prefit_dict
+))
+		return self
+	def predict(self, X, plot=True, against=None, **kwargs):
+		y_pred = self.strategy.predict(X, **{k: v for k, v in kwargs.items() if k != 'y0'})
+		if plot: self.plotter.plot_prediction(against, y_pred)
+		return y_pred
+	def cross_validation(self, X, y, plot=True, n_splits = 5, split_units = '%', test_size = 20, gap_size = 0, **kwargs):
+		X, y = check_X_y(X, y)
+		y = y.ravel()
+		y_tests, y_preds, scores, test_pos = [], [], [], []
+		if not self.strategy.defer_split:	# XGBStrategy does not defer split
+			self.strategy.prefit_context.update({
+				'from_xval': True,
+				'X': X,
+				'y': y,
+				})
+			for train_idx, test_idx in compose_dataset_splitter(split_units,test_size,gap_size)(X, y, n_splits):
+				self.strategy.prefit_context.update({
+					'train_idx': train_idx,
+					'test_idx': test_idx,
+					})
+				X_train, y_train = X[train_idx], y[train_idx]
+				X_test, y_test = X[test_idx], y[test_idx]
+				self.fit(X_train, y_train, plot=False, **kwargs)
+				pred = self.predict(X_test, plot=False)
+				score = SCORE_FUNCTION(pred, y_test)
+				y_tests.append(y_test)
+				y_preds.append(pred)
+				scores.append(score)
+				test_pos.append(test_idx)
+			self.strategy.prefit_context.update({
+				'from_xval': False,
+				})
+		# else:	# Implement for RNNStrategy and others that defer split
+		if plot:
+			self.plotter.plot_crossvalidation(y_tests, y_preds, scores, list(range(n_splits)))
+		return test_idx, y_preds, scores
+
+	def __init__(self, strategy: 'M3Strategy', plotstyle=None):
+		self.strategy: M3Strategy = strategy
+		self.plotter = self.Plotter(plotstyle=plotstyle)
+	def get_params(self, deep=True):
+		return self.strategy.get_params(deep=deep)
+	def set_params(self, **params):
+		self.strategy.set_params(**params)
+		return self
 class M3Strategy(ABC, BaseEstimator, RegressorMixin):
 	@abstractmethod
 	def prefit(self, X, y, **kwargs): return {}
@@ -2586,229 +3239,10 @@ class RNNStrategy(nn.Module, M3Strategy):
 		self.optimizer = optimizer
 		self.loss = loss
 		self.batch_first = None
-class M3(BaseEstimator, RegressorMixin):
-	class Plotter:
-		def plot_crossvalidation(self, y_tests, y_preds, scores, fold_indices):
-			def sanitize_plotstyle(ps: PlotStyle) -> PlotStyle:
-				if ps is None: ps = get_plotstyle('')
-				def _is_valid_figsize_callable(obj):
-					try:
-						if not callable(obj): return False
-						result = obj(1)
-						return (
-							isinstance(result, tuple)
-							and len(result) == 2
-							and all(isinstance(x, (int, float)) for x in result)
-						)
-					except Exception:
-						return False
-				if not _is_valid_figsize_callable(ps.multiple_figsize):
-					ps.multiple_figsize = None
-				if not isinstance(ps.reference_plot_options, dict):
-					ps.reference_plot_options = {}
-				if not isinstance(ps.prediction_plot_options, dict):
-					ps.prediction_plot_options = {}
-				if not mcolors.is_color_like(ps.facecolor):
-					ps.facecolor = None
-				if not isinstance(ps.grid_options, list):
-					ps.grid_options = []
-				if not (isinstance(ps.annotate_fontsize, (int,float)) and ps.annotate_fontsize > 0):
-					ps.annotate_fontsize = None
-				if not (isinstance(ps.legend_fontsize, (int,float)) and ps.legend_fontsize > 0):
-					ps.legend_fontsize = None
-				if not (isinstance(ps.tick_label_fontsize, (int,float)) and ps.tick_label_fontsize > 0): 
-					ps.tick_label_fontsize = None
-				if not (isinstance(ps.M3_crossvalidation_filename, str)): 
-					ps.M3_crossvalidation_filename = 'M3_crossvalidation'
-				if not (isinstance(ps.M3_crossvalidation_title, str)): 
-					ps.M3_crossvalidation_title = ''
-				if not (isinstance(ps.save_figure_extension, str)): 
-					ps.save_figure_extension = 'svg'
-				if not (isinstance(ps.savefig_bbox_inches, str)): 
-					ps.savefig_bbox_inches = 'tight'
-				if not (is_valid_font(ps.label_fontfamily)): 
-					ps.label_fontfamily = None
-				if not isinstance(ps.single_figsize,tuple) or len(ps.single_figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.single_figsize]):
-					ps.single_figsize = None
-				if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
-					ps.spine_linewidth = None
-				return ps
-			PS = sanitize_plotstyle(self.plotstyle)
-			n_folds = len(fold_indices)
-			fig, ax = plt.subplots(n_folds, figsize=PS.multiple_figsize(n_folds) )
-			if n_folds == 1: ax = [ax]
-			for ff in fold_indices:
-				ax[ff].plot(y_tests[ff], **PS.reference_plot_options)	# Reference line
-				ax[ff].plot(y_preds[ff], **PS.prediction_plot_options)	# Prediction line
-				ax[ff].set_facecolor(PS.facecolor)
-				for grid_option in PS.grid_options: ax[ff].grid(**grid_option)
-				ax[ff].annotate(f'Fold {ff+1}', xy=(0.01,0.04), xycoords='axes fraction',
-					fontsize=PS.annotate_fontsize, horizontalalignment='left', verticalalignment='bottom')
-				ax[ff].annotate(PS.score_label+f' = {scores[ff]:0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
-					fontsize=PS.annotate_fontsize, horizontalalignment='right', verticalalignment='bottom')
-				ax[ff].legend(loc='lower center', fontsize=PS.legend_fontsize)
-				ax[ff].tick_params(axis='both', labelsize=PS.tick_label_fontsize)
-				if PS.spine_linewidth is not None:
-					for spine in ax[ff].spines.values(): spine.set_linewidth(PS.spine_linewidth)
-			# prints a shared y axis label
-			fig.text(0.05, 0.5, PS.ylabel_temperature_diff, va='center', rotation='vertical', fontsize = PS.label_fontsize, fontname=PS.label_fontfamily)
-			ax[-1].set_xlabel(PS.xlabel_time, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
-			PlotStyle.settitle_and_savefig(fig, ax,
-				savefig_options=PlotStyle.compose_savefig_options(
-					fname=PS.M3_crossvalidation_filename, 
-					format=PS.save_figure_extension, 
-					bbox_inches=PS.savefig_bbox_inches
-				),
-				set_title_options=PlotStyle.compose_set_title_options(
-					label=PS.M3_crossvalidation_title, 
-					fontsize=PS.title_fontsize,
-					fontname=PS.label_fontfamily
-				),
-				savefig=PS.M3_crossvalidation_savefig,
-				save_with_title=PS.save_with_title
-			)
-			plt.show(block=True)
-		def plot_prediction(self, y_true, y_pred, **kwargs):
-			"""
-			Plot predictions vs reference for a single fit (full dataset).
-			"""
-			if y_true is not None and len(y_true) != len(y_pred):
-				warnings.warn("y_true and y_pred must have the same length.")
-				return
-			def sanitize_plotstyle(ps: PlotStyle) -> PlotStyle:
-				if ps is None: ps = get_plotstyle('')
-				if not isinstance(ps.reference_plot_options, dict):
-					ps.reference_plot_options = {}
-				if not isinstance(ps.prediction_plot_options, dict):
-					ps.prediction_plot_options = {}
-				if not mcolors.is_color_like(ps.facecolor):
-					ps.facecolor = None
-				if not isinstance(ps.grid_options, list):
-					ps.grid_options = []
-				if not (isinstance(ps.legend_fontsize, (int,float)) or ps.legend_fontsize <= 0):
-					ps.legend_fontsize = None
-				if not (isinstance(ps.tick_label_fontsize, (int,float)) and ps.tick_label_fontsize > 0): 
-					ps.tick_label_fontsize = None
-				if not (isinstance(ps.xlabel_time, str)):
-					ps.xlabel_time = ''
-				if not (isinstance(ps.ylabel_temperature, str)):
-					ps.ylabel_temperature = ''
-				if not (isinstance(ps.M3_partial_prediction_title, str)):
-					ps.M3_partial_prediction_title = ''
-				if not (isinstance(ps.ylabel_temperature_diff, str)):
-					ps.M3_partial_prediction_title = ''
-				if not (isinstance(ps.M3_partial_prediction_filename, str)): 
-					ps.M3_partial_prediction_filename = 'M3_partial_prediction'
-				if not (isinstance(ps.save_figure_extension, str)): 
-					ps.save_figure_extension = 'svg'
-				if not (isinstance(ps.savefig_bbox_inches, str)): 
-					ps.savefig_bbox_inches = 'tight'
-				if not (is_valid_font(ps.label_fontfamily)): 
-					ps.label_fontfamily = None
-				if not isinstance(ps.single_figsize,tuple) or len(ps.single_figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.single_figsize]):
-					ps.single_figsize = None
-				if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
-					ps.spine_linewidth = None
-				return ps
-			PS = sanitize_plotstyle(self.plotstyle)
-
-			fig, ax = plt.subplots(1, figsize=PS.single_figsize)
-			if isinstance(y_true, pd.Series): x = y_true.index
-			else: x = range(len(y_true))
-			if y_true is not None: ax.plot(x, y_true, **PS.reference_plot_options)		# Reference line
-			ax.plot(x, y_pred, **PS.prediction_plot_options)	# Prediction line
-			ax.set_facecolor(PS.facecolor)
-			for grid_option in PS.grid_options: ax.grid(**grid_option)
-			ax.set_xlabel(PS.xlabel_time, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
-			ylabel = PS.ylabel_temperature_diff or PS.ylabel_temperature
-			ax.set_ylabel(ylabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
-			ax.legend(fontsize=PS.legend_fontsize)
-			ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)
-			ax.annotate(PS.score_label+f' = {SCORE_FUNCTION(y_true,y_pred):0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
-				fontsize=PS.annotate_fontsize, horizontalalignment='right', verticalalignment='bottom')
-			if PS.spine_linewidth is not None:
-				for spine in ax.spines.values(): spine.set_linewidth(PS.spine_linewidth)
-			PlotStyle.settitle_and_savefig(fig, ax,
-				savefig_options=PlotStyle.compose_savefig_options(
-					fname=PS.M3_partial_prediction_filename, 
-					format=PS.save_figure_extension, 
-					bbox_inches=PS.savefig_bbox_inches
-				),
-				set_title_options=PlotStyle.compose_set_title_options(
-					label=PS.M3_partial_prediction_title, 
-					fontsize=PS.title_fontsize,
-					fontname=PS.label_fontfamily
-				),
-				savefig=PS.M3_partial_prediction_savefig,
-				save_with_title=PS.save_with_title
-			)
-			plt.show(block=True)
-
-		def __init__(self, plotstyle: PlotStyle = None):
-			self.plotstyle = plotstyle
-	def fit(self, X, y, plot=True, split_units='%', test_size=20, gap_size=0, **kwargs):
-		# Plotting functionality is still not implemented
-		prefit_dict = {}
-		if not self.strategy.defer_split:
-			if not self.strategy.prefit_context['from_xval']:
-				train_idx, test_idx = compose_dataset_splitter(split_units,test_size,gap_size)(X, y, 1)
-				self.strategy.prefit_context.update({
-					'train_idx': train_idx,
-					'test_idx': test_idx,
-					'X': X,
-					'y': y,
-					})
-			prefit_dict = self.strategy.prefit(X, y, **kwargs)
-		self.strategy.fit(X, y, **(kwargs|prefit_dict))
-		return self
-	def predict(self, X, plot=True, against=None, **kwargs):
-		y_pred = self.strategy.predict(X, **kwargs)
-		if plot: self.plotter.plot_prediction(against, y_pred)
-		return y_pred
-	def cross_validation(self, X, y, plot=True, n_splits = 5, split_units = '%', test_size = 20, gap_size = 0, **kwargs):
-		X, y = check_X_y(X, y)
-		y = y.ravel()
-		y_tests, y_preds, scores, test_pos = [], [], [], []
-		if not self.strategy.defer_split:	# XGBStrategy does not defer split
-			self.strategy.prefit_context.update({
-				'from_xval': True,
-				'X': X,
-				'y': y,
-				})
-			for train_idx, test_idx in compose_dataset_splitter(split_units,test_size,gap_size)(X, y, n_splits):
-				self.strategy.prefit_context.update({
-					'train_idx': train_idx,
-					'test_idx': test_idx,
-					})
-				X_train, y_train = X[train_idx], y[train_idx]
-				X_test, y_test = X[test_idx], y[test_idx]
-				self.fit(X_train, y_train, plot=False, **kwargs)
-				pred = self.predict(X_test, plot=False)
-				score = SCORE_FUNCTION(pred, y_test)
-				y_tests.append(y_test)
-				y_preds.append(pred)
-				scores.append(score)
-				test_pos.append(test_idx)
-			self.strategy.prefit_context.update({
-				'from_xval': False,
-				})
-		# else:	# Implement for RNNStrategy and others that defer split
-		if plot:
-			self.plotter.plot_crossvalidation(y_tests, y_preds, scores, list(range(n_splits)))
-		return test_idx, y_preds, scores
-
-	def __init__(self, strategy: M3Strategy, plotstyle=None):
-		self.strategy: M3Strategy = strategy
-		self.plotter = self.Plotter(plotstyle=plotstyle)
-	def get_params(self, deep=True):
-		return self.strategy.get_params(deep=deep)
-	def set_params(self, **params):
-		self.strategy.set_params(**params)
-		return self
 
 
 if __name__ == "__main__":
-	def SythesizeDataset():
+	def sythesize_dataset():
 		def AddNoise(df,Pt,col,scale,ceil=1,floor=0):
 			Noise=np.random.normal(scale=scale, size=df[col].shape)
 			col=df.columns.get_loc(col)
@@ -3129,7 +3563,7 @@ if __name__ == "__main__":
 				else:				Segments.append({'state':'norm','pos_low':pos_low,'pos_up':pos_up,'avg':avg})
 			return ChangePoints, Segments
 		return df
-	df2 = SythesizeDataset()	# Synthesize a dataset
+	df2 = sythesize_dataset()	# Synthesize a dataset
 
 
 	# ==================  Define and instantiate model components
@@ -3156,21 +3590,21 @@ if __name__ == "__main__":
 
 	m3_source_col = 'Temp'
 	df3=df2.loc[:,df2.columns != m3_source_col].copy(deep=True)
-	target_col = 'Temp_residue'
-	df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
+	TEMPERATURE_RESIDUE = 'Temp_residue'
+	df3.loc[:,TEMPERATURE_RESIDUE] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(TEMPERATURE_RESIDUE)
 
 	m3obj = M3(
 		XGBStrategy(n_estimators=1000, early_stopping_rounds=20, learning_rate=0.001),
 		plotstyle=get_plotstyle('IEEE2025')
 	)
 	m3obj.cross_validation(plot = 	(PP := True),
-		X = df3.loc[:,df3.columns != target_col],	
-		y = df3.loc[:,target_col],					
+		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE],	
+		y = df3.loc[:,TEMPERATURE_RESIDUE],					
 		n_splits=3
 		)					# options
 	m3obj.fit(plot = 				(PP := True),
-		X = df3.loc[:,df3.columns != target_col],	
-		y = df3.loc[:,target_col],
+		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE],	
+		y = df3.loc[:,TEMPERATURE_RESIDUE],
 		)
-	m3obj.predict(df3.loc[:,df3.columns != target_col], plot = PP, against=df3[target_col])
+	m3obj.predict(df3.loc[:,df3.columns != TEMPERATURE_RESIDUE], plot = PP, against=df3[TEMPERATURE_RESIDUE])
 

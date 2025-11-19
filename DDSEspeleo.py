@@ -5,7 +5,6 @@ import re
 import matplotlib.pyplot as plt
 from datetime import timedelta
 import ruptures as rpt
-from math import floor
 from ddslib import *
 import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
@@ -28,14 +27,14 @@ PLOT = 0 if NOPLOT else (	# Comment and uncomment to disable/enable plots
 # PLOT_DATASET |
 # PLOT_CLIPPED_DATASET | 
 # PLOT_M1_TRAINING_HISTORY | 
-PLOT_M1_PREDICTION | 
+# PLOT_M1_PREDICTION | 
 # PLOT_M2_TRAINING_HISTORY | 
 # PLOT_M2_PARTIAL_PREDICTION | 
 # PLOT_M3_TRAINING_HISTORY | 
 # PLOT_M3_PARTIAL_PREDICTION | 
-PLOT_M2M3_COMPOSITE_PREDICTION | 
+# PLOT_M2M3_COMPOSITE_PREDICTION | 
 0 )
-
+PLOT_OUTSIDE_PIPELINE = False
 #region SELECTED_MODEL flag definitions
 M1_DELAYREGRESSION = 1<<0
 M2_1ST_ORDER = 1<<1
@@ -48,10 +47,18 @@ SELECTED_MODELS = (	# Comment and uncomment to select used models. Select one fo
 M1_DELAYREGRESSION |
 M2_1ST_ORDER |
 # M2_2ND_ORDER |	# not yet implemented
-# M3_XGB |
-M3_RNN |
+M3_XGB |
+# M3_RNN |
 # M3_LSTM |
 0 )
+
+#region Column name definitions
+TEMPERATURE = 'T_CPU'
+TEMPERATURE_RESIDUE = 'Temp_residue'
+OVERHEATING_DETECTION_FEATURE = 'CPU'
+PARTIAL_PREDICTION = 'Partial prediction'
+PREDICTION = 'Prediction'
+#endregion
 
 #%% Resolve telemetry variable
 def resolvetel():
@@ -216,27 +223,26 @@ def resolvetel():
 	return tel.tel
 tel = resolvetel()
 DT=(tel.index[-1]-tel.index[0])/len(tel)
-TARGET_COL = 'T_CPU'
 
 #%% Calculate and extract features from tel
+features=[
+			#'T_CPU',
+			#'i_B1','i_B1_avg','i_B2','i_B2_avg',
+			'i_M1','i_M2','i_M3','i_M4',
+			# 'T_CPU_trend',# 'T_CPU_detrend',
+			# 'T_CPU_trend_lag1','T_CPU_trend_lag2','T_CPU_trend_lag3','T_CPU_trend_lag4',
+			# 'CPU_0','CPU_1','CPU_2','CPU_3','CPU_4','CPU_5','CPU_6','CPU_7',
+			OVERHEATING_DETECTION_FEATURE,
+			# 'LED_F', 'LED_B',
+			# 'Dissip_B1','Dissip_B2',
+			# 'Dissip_M1','Dissip_M2','Dissip_M3','Dissip_M4',
+			# 'Dissip_M1_lag1','Dissip_M1_lag2','Dissip_M1_lag3','Dissip_M1_lag4',
+			# 'Dissip_M2_lag1','Dissip_M2_lag2','Dissip_M2_lag3','Dissip_M2_lag4',
+			# 'Dissip_M3_lag1','Dissip_M3_lag2','Dissip_M3_lag3','Dissip_M3_lag4',
+			# 'Dissip_M4_lag1','Dissip_M4_lag2','Dissip_M4_lag3','Dissip_M4_lag4',
+		]
 def calcfeatures(tel: pd.DataFrame) -> pd.DataFrame:
 	target=['T_CPU']
-	features=[
-				#'T_CPU',
-				#'i_B1','i_B1_avg','i_B2','i_B2_avg',
-				'i_M1','i_M2','i_M3','i_M4',
-				# 'T_CPU_trend',# 'T_CPU_detrend',
-				# 'T_CPU_trend_lag1','T_CPU_trend_lag2','T_CPU_trend_lag3','T_CPU_trend_lag4',
-				# 'CPU_0','CPU_1','CPU_2','CPU_3','CPU_4','CPU_5','CPU_6','CPU_7',
-				'CPU',
-				# 'LED_F', 'LED_B',
-				# 'Dissip_B1','Dissip_B2',
-				# 'Dissip_M1','Dissip_M2','Dissip_M3','Dissip_M4',
-				# 'Dissip_M1_lag1','Dissip_M1_lag2','Dissip_M1_lag3','Dissip_M1_lag4',
-				# 'Dissip_M2_lag1','Dissip_M2_lag2','Dissip_M2_lag3','Dissip_M2_lag4',
-				# 'Dissip_M3_lag1','Dissip_M3_lag2','Dissip_M3_lag3','Dissip_M3_lag4',
-				# 'Dissip_M4_lag1','Dissip_M4_lag2','Dissip_M4_lag3','Dissip_M4_lag4',
-			]
 	df=tel.loc[:,target]
 	for f in features:
 		if f in tel.columns: 
@@ -244,8 +250,8 @@ def calcfeatures(tel: pd.DataFrame) -> pd.DataFrame:
 
 	regex = re.compile(r'^CPU_\d+$')
 	cols = [col for col in tel.columns if regex.match(col)]
-	if ('CPU' in features) and cols: # cols evaluates to false if it is empty
-		df.loc[:,'CPU'] = tel.loc[:,cols].max(axis=1)/100
+	if (OVERHEATING_DETECTION_FEATURE in features) and cols: # cols evaluates to false if it is empty
+		df.loc[:,OVERHEATING_DETECTION_FEATURE] = tel.loc[:,cols].max(axis=1)/100
 		df = df.join(tel[cols]/100)
 
 	return df.dropna(), len(cols)
@@ -300,7 +306,7 @@ class DatasetPlotter:
 		# ============ CPU percent
 		aa=1
 		if not plot_only_raw_cpu:
-			ax[aa].plot('CPU', data=df, label = 'CPU feature', linewidth=PS.linewidth_thin if plot_only_cpu_feature else PS.linewidth_thick+0.5, color='C8')
+			ax[aa].plot(OVERHEATING_DETECTION_FEATURE, data=df, label = 'CPU feature', linewidth=PS.linewidth_thin if plot_only_cpu_feature else PS.linewidth_thick+0.5, color='C8')
 		if not plot_only_cpu_feature:
 			num_cpus = len([col for col in df.columns if re.match(r'^CPU_\d+$', col)])
 			for cpu in range(num_cpus):
@@ -337,7 +343,7 @@ class DatasetPlotter:
 PS=get_plotstyle('IEEE2025')
 dsplotter=DatasetPlotter(PS)
 #%% Segment time series
-def HighCPUDetect(df, margin=0,threshold=0.8):
+def HighCPUDetect(df, input_col: str, model="l2",margin=0,threshold=0.8):
 	"""
 	Implements high cpu detection logic.
 	
@@ -350,21 +356,22 @@ def HighCPUDetect(df, margin=0,threshold=0.8):
 	:return segment: list of detected segments, formatted as dictionaries with the following keys:
 	
 	"""
-	cpu_percent=df['CPU'].values
-	model = "l2"  # "l1", "rbf", "linear", "normal", "ar"
+	if not model in {"l2", "l1", "rbf", "linear", "normal", "ar"}: raise ValueError(f"Unrecognized model option: {model}")
+	if not input_col in df.columns: raise TypeError(f"{input_col} is not a  column in df")
+	cpu_percent=df[input_col].values
 	algo = rpt.Window(model=model).fit(cpu_percent)
-	ChangePoints = algo.predict(pen=5)
-	Segments=[]
-	for cc, pos_last in enumerate(ChangePoints):
+	change_points = algo.predict(pen=5)
+	segments=[]
+	for cc, pos_last in enumerate(change_points):
 		pos_last=min(pos_last+margin,len(cpu_percent))
-		pos_first=max(ChangePoints[cc-1]+1-margin,0) if cc>0 else 0
-		
+		pos_first=max(change_points[cc-1]+1-margin,0) if cc>0 else 0
 		
 		avg=float(np.average(cpu_percent[pos_first:pos_last]))
-		if avg>threshold: 	Segments.append({'state':'high','pos_first':pos_first,'pos_last':pos_last,'avg':avg})
-		else:				Segments.append({'state':'norm','pos_first':pos_first,'pos_last':pos_last,'avg':avg})
-	return ChangePoints, Segments
-bkpts, segments = HighCPUDetect(dataset, margin = 5,threshold=0.8)
+
+		if avg>threshold: 	segments.append({'state':'high','pos_first':pos_first,'pos_last':pos_last,'avg':avg})
+		else:				segments.append({'state':'norm','pos_first':pos_first,'pos_last':pos_last,'avg':avg})
+	return change_points, segments
+bkpts, segments = HighCPUDetect(dataset, OVERHEATING_DETECTION_FEATURE, margin = 5,threshold=0.8)
 #%% Dataset plots
 if plotdataset:=bool(PLOT & PLOT_DATASET): dsplotter.plot(dataset,segments, plot_only_raw_cpu=True,
 				savefig_options=PlotStyle.compose_savefig_options(
@@ -415,13 +422,11 @@ if plot_clipped_dataset := bool(PLOT & PLOT_CLIPPED_DATASET) : dsplotter.plot(df
 #%% Define ambient temperature to be the temperature readout from the first few samples
 def calc_temp_amp(df):
 	return df.loc[df.index<=10,'T_CPU'].mean()
-df2=df[[TARGET_COL,'CPU']].copy(deep=True)
-
-
-
+df2=df[[TEMPERATURE,OVERHEATING_DETECTION_FEATURE]].copy(deep=True)
 
 #%% Define and instantiate DDS model components
 CLIP_RESTRICT = lambda value, limits: np.clip(value, *limits)
+pipeline_plot_kwargs_map={}
 if SELECTED_MODELS & M1_DELAYREGRESSION:
 	def compose_is_time_window_smaller_than_delay(time_index: pd.Index) -> bool:
 		if isinstance(time_index, (pd.DatetimeIndex)):
@@ -453,13 +458,13 @@ if SELECTED_MODELS & M1_DELAYREGRESSION:
 	row_list = range(len(dataset))
 	row_mask = [(segments[1]['pos_first'] <= row) and (row  < segments[1]['pos_last'] + max_delay_samples) for row in row_list]
 	features = [f'CPU_{cpu}' for cpu in range(NUM_CORES)]
-	# features = ['CPU']	
-	df1 = dataset.loc[row_mask, [TARGET_COL]+features]
+	# features = [OVERHEATING_DETECTION_FEATURE]	
+	df1 = dataset.loc[row_mask, [TEMPERATURE]+features]
 	param_names = ['delay']+[f'w{ff}' for ff in range(len(features))]
 	limits = [(0,max_delay_samples)] + [Param.Utils.UNDETERMINED_LIMIT]*len(features)
 	restricts=[CLIP_RESTRICT] + [Param.Utils.IDENTITY_RESTRICT]*len(features)
 	types = dict(zip(param_names,[int] + [float for _ in range(len(features))]))
-	m1obj=M1(DelayRegressionStrategy(FCPU=lambda cpu: cpu**2, temp0=df1[TARGET_COL].iloc[0],
+	m1obj=M1(DelayRegressionStrategy(FCPU=lambda cpu: cpu**2, temp0=df1[TEMPERATURE].iloc[0],
 			params = Param(
 				domain=Param.Domain(limits=limits, restricts=restricts),
 				params=param_names, 
@@ -469,13 +474,15 @@ if SELECTED_MODELS & M1_DELAYREGRESSION:
 		plotstyle=PS
 	)
 	
-	m1obj.fit(plot= bool(PLOT & PLOT_M1_TRAINING_HISTORY), 
-		X = df1.loc[:,df1.columns != TARGET_COL], 
-		y = df1[TARGET_COL]
+	m1obj.fit(plot= bool(PLOT & PLOT_M1_TRAINING_HISTORY) and PLOT_OUTSIDE_PIPELINE, 
+		X = df1.loc[:,df1.columns != TEMPERATURE], 
+		y = df1[TEMPERATURE]
 	)
-	m1obj.predict(plot = bool(PLOT & PLOT_M1_PREDICTION), against=df1[TARGET_COL],
-		X = df1.loc[:,df1.columns != TARGET_COL]
+	m1obj.predict(plot = bool(PLOT & PLOT_M1_PREDICTION) and PLOT_OUTSIDE_PIPELINE, against=df1[TEMPERATURE],
+		X = df1.loc[:,df1.columns != TEMPERATURE]
 	)
+	pipeline_plot_kwargs_map[m1obj.fit]={'plot':bool(PLOT & PLOT_M1_TRAINING_HISTORY)}
+	pipeline_plot_kwargs_map[m1obj.predict]={'plot':bool(PLOT & PLOT_M1_PREDICTION), 'against':TEMPERATURE}
 if SELECTED_MODELS & M2_1ST_ORDER:
 	derive_inputs = ['TauCPU','TauTemp']
 	behaviors = dict(BetaCPU=Param.Utils.FLAG_DERIVED, BetaTemp=Param.Utils.FLAG_DERIVED)
@@ -489,16 +496,16 @@ if SELECTED_MODELS & M2_1ST_ORDER:
 				outputs[out_arg] = expr(kwargs[in_arg])
 			return outputs
 		return derive_fn
-	m2obj=M2(FirstOrderStrategy(lambda cpu: cpu**2, lambda temp_current, temp_ext: temp_current-temp_ext, temp0=calc_temp_amp(df2),
+	m2obj=M2(FirstOrderStrategy(lambda cpu: cpu**2, lambda temp_current, temp_ext: temp_current-temp_ext, temp0=(temp0:=calc_temp_amp(dataset)), temp_amb=temp0,
 			params = Param(behaviors=behaviors, types = float, derive_after_init=True,
 				derive_fn=compose_derive_1order_beta(DT,dict(zip(derive_inputs,derive_outputs))), derive_inputs=derive_inputs, 
 				domain = Param.Domain(limits=dict(KCPU=(8e-2,8), KTemp=(1e-3,0.01), TauCPU=(8e-2,8), TauTemp=(1e-1,10)),restricts=CLIP_RESTRICT),
-				params=['KCPU', 'KTemp', 'TauCPU', 'TauTemp'] + derive_outputs		# Uncomment to not use starting values
+				# params=['KCPU', 'KTemp', 'TauCPU', 'TauTemp'] + derive_outputs												# Uncomment to not use starting values
 				# params=dict(KCPU=0.8955001304, KTemp=0.0008084840447, TauCPU=0.7114574813, TauTemp=0.4034388338) | unspec_beta_dict,	# RMSE = 1.249
 				# params=dict(KCPU=0.7994835811, KTemp=0.0012296959998, TauCPU=0.8146071702, TauTemp=0.9513807657) | unspec_beta_dict,	# RMSE = 1.398
 				# params=dict(KCPU=0.9661344533, KTemp=0.0016280793961, TauCPU=0.8349590176, TauTemp=0.9907842974) | unspec_beta_dict,	# RMSE = 1.171
 				# params=dict(KCPU=1.9967875200, KTemp=0.0017382369481, TauCPU=1.7285830177, TauTemp=1.0368206944) | unspec_beta_dict,	# RMSE = 1.104
-				# params=dict(KCPU=7.0351605688, KTemp=0.0097643619771, TauCPU=6.1773441730, TauTemp=5.8189918760) | unspec_beta_dict,   	# RMSE = 1.072
+				params=dict(KCPU=7.0351605688, KTemp=0.0097643619771, TauCPU=6.1773441730, TauTemp=5.8189918760) | unspec_beta_dict,  # RMSE = 1.072
 			)
 		),
 		FirstOrderOptimizer(training_duration=timedelta(seconds=1), composition='any', 
@@ -507,13 +514,14 @@ if SELECTED_MODELS & M2_1ST_ORDER:
 					),
 		plotstyle=PS
 	)	
-	m2obj.fit(df2['CPU'].to_frame(), df2[TARGET_COL], plot= bool(PLOT & PLOT_M2_TRAINING_HISTORY))
-	m2pred = m2obj.predict(df2['CPU'].to_frame(), 		plot= bool(PLOT & PLOT_M2_PARTIAL_PREDICTION), against = df2[TARGET_COL])
-
-m3_source_col = TARGET_COL
-df3=df.loc[:,df.columns != m3_source_col].copy(deep=True)
-target_col = 'Temp_residue'
-df3.loc[:,target_col] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(target_col)
+	m2obj.fit(df2[OVERHEATING_DETECTION_FEATURE].to_frame(), df2[TEMPERATURE], plot= bool(PLOT & PLOT_M2_TRAINING_HISTORY))
+	m2pred = m2obj.predict(df2[OVERHEATING_DETECTION_FEATURE].to_frame(), 		plot= bool(PLOT & PLOT_M2_PARTIAL_PREDICTION), against = df2[TEMPERATURE])
+	pipeline_plot_kwargs_map[m2obj.fit]={'plot':bool(PLOT & PLOT_M2_TRAINING_HISTORY) and PLOT_OUTSIDE_PIPELINE}
+	pipeline_plot_kwargs_map[m2obj.predict]={'plot':bool(PLOT & PLOT_M2_PARTIAL_PREDICTION) and PLOT_OUTSIDE_PIPELINE, 'against':TEMPERATURE}
+if SELECTED_MODELS & (M3_XGB | M3_RNN | M3_LSTM): 
+	m3_source_col = TEMPERATURE
+	df3=df.loc[:,df.columns != m3_source_col].copy(deep=True)
+	df3.loc[:,TEMPERATURE_RESIDUE] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(TEMPERATURE_RESIDUE)
 if SELECTED_MODELS & M3_XGB:
 	m3obj=M3(
 		XGBStrategy(n_estimators=1000),
@@ -522,12 +530,12 @@ if SELECTED_MODELS & M3_XGB:
 	# 	X = df3.loc[:,df3.columns != target_col],	
 	# 	y = df3.loc[:,target_col],
 	# 	)
-	m3obj.fit(plot = bool(PLOT & PLOT_M3_TRAINING_HISTORY),
-		X = df3.loc[:,df3.columns != target_col],	
-		y = df3.loc[:,target_col],
+	m3obj.fit(plot = bool(PLOT & PLOT_M3_TRAINING_HISTORY) and PLOT_OUTSIDE_PIPELINE,
+		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE],	
+		y = df3.loc[:,TEMPERATURE_RESIDUE],
 		)
-	m3pred = m3obj.predict(plot = bool(PLOT & PLOT_M3_PARTIAL_PREDICTION),			against=df3[target_col],
-		X = df3.loc[:,df3.columns != target_col]
+	m3pred = m3obj.predict(plot = bool(PLOT & PLOT_M3_PARTIAL_PREDICTION) and PLOT_OUTSIDE_PIPELINE,			against=df3[TEMPERATURE_RESIDUE],
+		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE]
 		)
 if SELECTED_MODELS & M3_RNN:
 	m3obj=M3(RNNStrategy(nn.RNN, connection = nn.Linear, optimizer = torch.optim.Adam, loss = nn.MSELoss,
@@ -537,15 +545,15 @@ if SELECTED_MODELS & M3_RNN:
 			hidden_size = 64,
 			),
 		plotstyle=PS)
-	m3obj.fit(plot = bool(PLOT & PLOT_M3_TRAINING_HISTORY),
-		X = df3.loc[:,df3.columns != target_col],	
-		y = df3.loc[:,target_col],
+	m3obj.fit(plot = bool(PLOT & PLOT_M3_TRAINING_HISTORY) and PLOT_OUTSIDE_PIPELINE,
+		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE],	
+		y = df3.loc[:,TEMPERATURE_RESIDUE],
 		learning_rate = 0.01,
 		num_epochs = 5,
 		batch_size = (BATCH_SIZE := 5000),
 		)	
-	m3pred = m3obj.predict(plot = bool(PLOT & PLOT_M3_PARTIAL_PREDICTION),			against=df3[target_col],
-		X = df3.loc[:,df3.columns != target_col],
+	m3pred = m3obj.predict(plot = bool(PLOT & PLOT_M3_PARTIAL_PREDICTION) and PLOT_OUTSIDE_PIPELINE,			against=df3[TEMPERATURE_RESIDUE],
+		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE],
 		batch_size = BATCH_SIZE,
 		)
 if SELECTED_MODELS & M3_LSTM:
@@ -556,18 +564,38 @@ if SELECTED_MODELS & M3_LSTM:
 			hidden_size = 128
 			),
 		plotstyle=PS)
-	m3obj.fit(plot = bool(PLOT & PLOT_M3_TRAINING_HISTORY),
-		X = df3.loc[:,df3.columns != target_col],	
-		y = df3.loc[:,target_col],
+	m3obj.fit(plot = bool(PLOT & PLOT_M3_TRAINING_HISTORY) and PLOT_OUTSIDE_PIPELINE,
+		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE],	
+		y = df3.loc[:,TEMPERATURE_RESIDUE],
 		learning_rate = 0.001,
 		num_epochs = 20,
 		batch_size = (BATCH_SIZE := 1000),
 		)	
-	m3pred = m3obj.predict(plot = bool(PLOT & PLOT_M3_PARTIAL_PREDICTION),			against=df3[target_col],
-		X = df3.loc[:,df3.columns != target_col],
+	m3pred = m3obj.predict(plot = bool(PLOT & PLOT_M3_PARTIAL_PREDICTION) and PLOT_OUTSIDE_PIPELINE,			against=df3[TEMPERATURE_RESIDUE],
+		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE],
 		batch_size = BATCH_SIZE,
 		)
+if SELECTED_MODELS & (M3_XGB | M3_RNN | M3_LSTM): 
+	pipeline_plot_kwargs_map[m3obj.fit]={'plot':bool(PLOT & PLOT_M3_TRAINING_HISTORY)}
+	pipeline_plot_kwargs_map[m3obj.predict]={'plot':bool(PLOT & PLOT_M3_PARTIAL_PREDICTION), 'against':TEMPERATURE_RESIDUE}
 
+
+m3_input = [col for col in dataset.columns if col not in (TEMPERATURE,OVERHEATING_DETECTION_FEATURE)]
+ddsobj = DDS(predict_col=PREDICTION, temp_amb=calc_temp_amp(dataset),
+	segmenter = (OVERHEATING_DETECTION_FEATURE, HighCPUDetect),
+	state_pipe_mapping={
+		'high': 		{'X':[f'CPU_{cpu}' for cpu in range(NUM_CORES)], 	'y': TEMPERATURE, 						'op': m1obj, 				'ret': PREDICTION},
+		'norm':[dict(zip([				'X',									'y',								'op',							'ret'				], row)) for row in [
+				[				OVERHEATING_DETECTION_FEATURE,					TEMPERATURE,							m2obj, 				'M2 '+PARTIAL_PREDICTION	],
+				[			(TEMPERATURE,'M2 '+PARTIAL_PREDICTION),					None,				lambda ref, m2pred: ref - m2pred, 		TEMPERATURE_RESIDUE		],
+				[		 				m3_input,  							TEMPERATURE_RESIDUE,						m3obj, 				'M3 '+PARTIAL_PREDICTION	],
+				[	('M2 '+PARTIAL_PREDICTION,'M3 '+PARTIAL_PREDICTION),			None,			lambda m2pred, m3pred: m2pred + m3pred, 		PREDICTION			]
+			]
+		]
+	}
+)
+ddsobj.fit(dataset, plot_map=pipeline_plot_kwargs_map)
+pred, segmentation_summary, segments = ddsobj.predict(dataset, plot_map=pipeline_plot_kwargs_map)
 #%% Define the plotter for the composite prediction
 class CompositePredictionPlotter:
 	def __init__(self, plotstyle: PlotStyle):
@@ -641,6 +669,6 @@ class CompositePredictionPlotter:
 		)
 		plt.show(block=True)
 predplotter=CompositePredictionPlotter(PS)
-if plotpred:=bool(PLOT & PLOT_M2M3_COMPOSITE_PREDICTION): predplotter.plot(df2[TARGET_COL], m2pred+m3pred)
+if plotpred:=bool(PLOT & PLOT_M2M3_COMPOSITE_PREDICTION): predplotter.plot(df2[TEMPERATURE], m2pred+m3pred)
+if NOPLOT: report_output(SCORE_FUNCTION(df2[TEMPERATURE],m2pred+m3pred))
 
-if NOPLOT: report_output(SCORE_FUNCTION(df2[TARGET_COL],m2pred+m3pred))
