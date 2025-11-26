@@ -506,6 +506,7 @@ class Param:
 	@property
 	def domain(self): return _param_domain_map.get(self)
 	def validate(self, params: dict):
+		from numbers import Number
 		assert isinstance(params, dict), 'params must be a dict.'
 		names = set(self.names())
 		assert (diff := set(params.keys()) ^ names) == set(), f'Unrecognized parameters for object of type {self.__class__.__name__}: {diff}'

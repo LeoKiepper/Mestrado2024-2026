@@ -11,30 +11,33 @@ from matplotlib.ticker import FuncFormatter
 from measure_utils import report_output, NOPLOT
 from ddslib import M2, FirstOrderStrategy, FirstOrderOptimizer, get_plotstyle
 import tellib
+PS=get_plotstyle('IEEE2025')
 
 #region PLOT_ flag definitions
 PLOT_DATASET = 1<<0
 PLOT_CLIPPED_DATASET = 1<<1
-PLOT_M1_PREDICTION = 1<<2
-PLOT_M2_PARTIAL_PREDICTION = 1<<3
-PLOT_M3_PARTIAL_PREDICTION = 1<<4
-PLOT_M1_TRAINING_HISTORY = 1<<5
-PLOT_M2_TRAINING_HISTORY = 1<<6
-PLOT_M3_TRAINING_HISTORY = 1<<7 # Not implemented
-PLOT_M2M3_COMPOSITE_PREDICTION = 1<<8
+PLOT_M1_TRAINING_HISTORY = 1<<2
+PLOT_M2_TRAINING_HISTORY = 1<<3
+PLOT_M3_TRAINING_HISTORY = 1<<4 # Not implemented
+PLOT_SEGMENTS = 1<<5
+PLOT_M1_PREDICTION = 1<<6
+PLOT_M2_PARTIAL_PREDICTION = 1<<7
+PLOT_M3_PARTIAL_PREDICTION = 1<<8
+PLOT_FULL_PREDICTION = 1<<9
 #endregion
-PLOT = 0 if NOPLOT else (	# Comment and uncomment to disable/enable plots
+FLAGS = 0 if NOPLOT else (	# Comment and uncomment to disable/enable plots
 # PLOT_DATASET |
-# PLOT_CLIPPED_DATASET | 
+# PLOT_CLIPPED_DATASET |
 # PLOT_M1_TRAINING_HISTORY | 
-# PLOT_M1_PREDICTION | 
 # PLOT_M2_TRAINING_HISTORY | 
+# PLOT_M3_TRAINING_HISTORY | 	# not yet implemented
+# PLOT_SEGMENTS |
+# PLOT_M1_PREDICTION | 
 # PLOT_M2_PARTIAL_PREDICTION | 
-# PLOT_M3_TRAINING_HISTORY | 
-# PLOT_M3_PARTIAL_PREDICTION | 
-# PLOT_M2M3_COMPOSITE_PREDICTION | 
+# PLOT_M3_PARTIAL_PREDICTION |
+PLOT_FULL_PREDICTION |
 0 )
-PLOT_OUTSIDE_PIPELINE = False
+
 #region SELECTED_MODEL flag definitions
 M1_DELAYREGRESSION = 1<<0
 M2_1ST_ORDER = 1<<1
@@ -257,17 +260,215 @@ def calcfeatures(tel: pd.DataFrame) -> pd.DataFrame:
 	return df.dropna(), len(cols)
 dataset, NUM_CORES = calcfeatures(tel)
 
-#%% Define the plotter for the dataset
+#%% Define time-series segmenter
+def HighCPUDetect(df, input_col: str, model="l2",margin=0,threshold=0.8):
+	"""
+	Implements high cpu detection logic.
+	
+	:param cpu_percent: array containing CPU usage
+	:param cp: array for change points detected in cpu_percent, listed as indexes for each position.
+	Each position of cp is considered the last index of a segment (should not contain 0).
+	:param margin: number of indexes to consider on each side of each segment investigated in the detection criterion implemented.
+	:param threshold: consider high CPU usage if the average of the segment is greater than this value.
+
+	:return segment: list of detected segments, formatted as dictionaries with the following keys:
+	
+	"""
+	if not model in {"l2", "l1", "rbf", "linear", "normal", "ar"}: raise ValueError(f"Unrecognized model option: {model}")
+	if not input_col in df.columns: raise TypeError(f"{input_col} is not a  column in df")
+	cpu_percent=df[input_col].values
+	algo = rpt.Window(model=model).fit(cpu_percent)
+	change_points = algo.predict(pen=5)
+	segments=[]
+	for cc, pos_last in enumerate(change_points):
+		pos_last=min(pos_last+1+margin,len(cpu_percent))
+		pos_first=max(change_points[cc-1]+1-margin,0) if cc>0 else 0
+		
+		avg=float(np.average(cpu_percent[pos_first:pos_last]))
+
+		if avg>threshold: 	segments.append({'state':'high','pos_first':pos_first,'pos_last':pos_last,'avg':avg})
+		else:				segments.append({'state':'norm','pos_first':pos_first,'pos_last':pos_last,'avg':avg})
+	return change_points, segments
+
+#%% Define ambient temperature to be the temperature readout from the first few samples
+def calc_temp_amp(df):
+	return df.loc[df.index<=10,'T_CPU'].mean()
+
+#%% Define and instantiate model components and DDS orchestrator
+CLIP_RESTRICT = lambda value, limits: np.clip(value, *limits)
+if SELECTED_MODELS & M1_DELAYREGRESSION:
+	max_delay_samples = int(timedelta(seconds=1).total_seconds()/DT)
+	# row_list = range(len(dataset))
+	# row_mask = [(segments[1]['pos_first'] <= row) and (row  < segments[1]['pos_last'] + max_delay_samples) for row in row_list]
+	features = [f'CPU_{cpu}' for cpu in range(NUM_CORES)]
+	# features = [OVERHEATING_DETECTION_FEATURE]	
+	# df1 = dataset.loc[row_mask, [TEMPERATURE]+features]
+	param_names = ['delay']+[f'w{ff}' for ff in range(len(features))]
+	limits = [(0,max_delay_samples)] + [Param.Utils.UNDETERMINED_LIMIT]*len(features)
+	restricts=[CLIP_RESTRICT] + [Param.Utils.IDENTITY_RESTRICT]*len(features)
+	types = dict(zip(param_names,[int] + [float for _ in range(len(features))]))
+	m1obj=M1(DelayRegressionStrategy(FCPU=lambda cpu: cpu**2,
+			params = Param(
+				domain=Param.Domain(limits=limits, restricts=restricts),
+				params=param_names, 
+				types = types),
+		),
+		optimizer = DelayRegressionOptimizer(),
+		plotstyle=PS
+	)
+if SELECTED_MODELS & M2_1ST_ORDER:
+	derive_inputs = ['TauCPU','TauTemp']
+	behaviors = dict(BetaCPU=Param.Utils.FLAG_DERIVED, BetaTemp=Param.Utils.FLAG_DERIVED)
+	derive_outputs = list(behaviors.keys())
+	unspec_beta_dict = dict(zip(derive_outputs,[None]*len(derive_outputs)))
+	def compose_derive_1order_beta(Dt: float, derive_args: dict):
+		expr = lambda tau: 1- np.exp(-Dt/tau)
+		def derive_fn(**kwargs):
+			outputs = {}
+			for in_arg, out_arg in derive_args.items():
+				outputs[out_arg] = expr(kwargs[in_arg])
+			return outputs
+		return derive_fn
+	m2obj=M2(FirstOrderStrategy(lambda cpu: cpu**2, lambda temp_current, temp_ext: temp_current-temp_ext, temp0=(temp0:=calc_temp_amp(dataset)), temp_amb=temp0,
+			params = Param(behaviors=behaviors, types = float, derive_after_init=True,
+				derive_fn=compose_derive_1order_beta(DT,dict(zip(derive_inputs,derive_outputs))), derive_inputs=derive_inputs, 
+				domain = Param.Domain(limits=dict(KCPU=(8e-2,8), KTemp=(1e-3,0.01), TauCPU=(8e-2,8), TauTemp=(1e-1,10)),restricts=CLIP_RESTRICT),
+				# params=['KCPU', 'KTemp', 'TauCPU', 'TauTemp'] + derive_outputs												# Uncomment to not use starting values
+				# params=dict(KCPU=0.8955001304, KTemp=0.0008084840447, TauCPU=0.7114574813, TauTemp=0.4034388338) | unspec_beta_dict,	# RMSE = 1.249
+				# params=dict(KCPU=0.7994835811, KTemp=0.0012296959998, TauCPU=0.8146071702, TauTemp=0.9513807657) | unspec_beta_dict,	# RMSE = 1.398
+				# params=dict(KCPU=0.9661344533, KTemp=0.0016280793961, TauCPU=0.8349590176, TauTemp=0.9907842974) | unspec_beta_dict,	# RMSE = 1.171
+				# params=dict(KCPU=1.9967875200, KTemp=0.0017382369481, TauCPU=1.7285830177, TauTemp=1.0368206944) | unspec_beta_dict,	# RMSE = 1.104
+				params=dict(KCPU=7.0351605688, KTemp=0.0097643619771, TauCPU=6.1773441730, TauTemp=5.8189918760) | unspec_beta_dict,  # RMSE = 1.072
+			)
+		),
+		FirstOrderOptimizer(training_duration=timedelta(seconds=1), composition='any', 
+			training_stop_flags = FirstOrderOptimizer.StopConditions.GLOBAL_MIN_LOSS 
+								| FirstOrderOptimizer.StopConditions.GLOBAL_MAX_DURATION
+					),
+		plotstyle=PS
+	)	
+if SELECTED_MODELS & M3_XGB:
+	m3obj=M3(
+		XGBStrategy(n_estimators=1000),
+		plotstyle=PS)
+if SELECTED_MODELS & M3_RNN:
+	m3obj=M3(RNNStrategy(nn.RNN, connection = nn.Linear, optimizer = torch.optim.Adam, loss = nn.MSELoss,
+			feature_scaler = StandardScaler,
+			target_scaler = StandardScaler,
+			seq_length = 50,
+			hidden_size = 64,
+			),
+		plotstyle=PS)
+if SELECTED_MODELS & M3_LSTM:
+	m3obj=M3(RNNStrategy(nn.LSTM, connection = nn.Linear, optimizer = torch.optim.Adam, loss = nn.MSELoss,
+			feature_scaler = StandardScaler,
+			target_scaler = StandardScaler,
+			seq_length = 250,
+			hidden_size = 128
+			),
+		plotstyle=PS)
+
+# class PredictionPlotter:
+# 	def __init__(self, plotstyle: PlotStyle):
+# 		self.plotstyle = plotstyle
+# 	def plot(self, reference, pred):
+# 		def sanitize_plotstyle(ps: PlotStyle):
+# 			if ps is None: ps = get_plotstyle('')
+# 			if not (isinstance(ps.M2_training_score_history_title, str)): 
+# 				ps.M2_training_score_history_title = ''
+# 			if not (isinstance(ps.training_score_history_xlabel, str)): 
+# 				ps.training_score_history_xlabel = ''
+# 			if not (isinstance(ps.score_label, str)): 
+# 				ps.score_label = ''
+# 			if not (isinstance(ps.M2_training_score_history_filename, str)): 
+# 				ps.M2_training_score_history_filename = 'M2_training_score_history'
+# 			if not (isinstance(ps.save_figure_extension, str)): 
+# 				ps.save_figure_extension = 'svg'
+# 			if not (isinstance(ps.savefig_bbox_inches, str)): 
+# 				ps.savefig_bbox_inches = 'tight'
+# 			if not (is_valid_font(ps.label_fontfamily)): 
+# 				ps.label_fontfamily = None
+# 			if not (isinstance(ps.label_fontsize, (int,float)) and ps.label_fontsize > 0): 
+# 				ps.label_fontsize = None
+# 			if not (isinstance(ps.title_fontsize, (int,float)) and ps.title_fontsize > 0): 
+# 				ps.title_fontsize = None
+# 			if not (isinstance(ps.tick_label_fontsize, (int,float)) and ps.tick_label_fontsize > 0): 
+# 				ps.tick_label_fontsize = None
+# 			if not (isinstance(ps.spine_linewidth, (int,float)) and ps.spine_linewidth > 0): 
+# 				ps.spine_linewidth = None
+# 			if not mcolors.is_color_like(ps.facecolor):
+# 				ps.facecolor = None
+# 			if not (isinstance(ps.grid_options, list)): 
+# 				ps.grid_options = []
+# 			if not isinstance(ps.single_figsize,tuple) or len(ps.single_figsize) != 2 or any([not isinstance(dim,(float,int)) or dim <=0 for dim in ps.single_figsize]):
+# 				ps.single_figsize = None
+# 			return ps
+# 		PS = sanitize_plotstyle(self.plotstyle)
+
+# 		fig, ax = plt.subplots(1, figsize=PS.single_figsize)
+# 		if isinstance(reference, pd.Series): 
+# 			x = reference.index
+# 			ref = reference.values
+# 		else: 
+# 			x = range(len(reference))
+# 			ref = reference
+# 		ax.plot(x, ref, **PS.reference_plot_options)	# Reference line
+# 		ax.plot(x, pred, **PS.prediction_plot_options)	# Prediction line
+# 		ax.set_facecolor(PS.facecolor)
+# 		for grid_option in PS.grid_options: ax.grid(**grid_option)
+# 		ax.set_xlabel(PS.xlabel_time, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+# 		ax.set_ylabel(PS.ylabel_temperature, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+# 		ax.legend(fontsize=PS.legend_fontsize)
+# 		ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)
+# 		if PS.spine_linewidth is not None:
+# 			for spine in ax.spines.values(): spine.set_linewidth(PS.spine_linewidth)
+# 		ax.annotate(PS.score_label+f' = {SCORE_FUNCTION(ref,pred):0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
+# 			fontsize=PS.annotate_fontsize, horizontalalignment='right', verticalalignment='bottom')
+# 		PlotStyle.settitle_and_savefig(fig, ax,
+# 			savefig_options=PlotStyle.compose_savefig_options(
+# 				fname=PS.full_prediction_filename, 
+# 				format=PS.save_figure_extension, 
+# 				bbox_inches=PS.savefig_bbox_inches
+# 			),
+# 			set_title_options=PlotStyle.compose_set_title_options(
+# 				label=PS.full_prediction_title, 
+# 				fontsize=PS.title_fontsize,
+# 				fontname=PS.label_fontfamily
+# 			),
+# 			savefig=PS.full_prediction_savefig,
+# 			save_with_title=PS.save_with_title
+# 		)
+# 		plt.show(block=True)
+# predplotter=PredictionPlotter(PS)
+
+m3_input = [col for col in dataset.columns if col not in (TEMPERATURE,OVERHEATING_DETECTION_FEATURE)]
+ddsobj = DDS(target_col=TEMPERATURE, predict_col=PREDICTION, temp_amb=calc_temp_amp(dataset),
+	segmenter = (OVERHEATING_DETECTION_FEATURE, lambda df, col, **kwargs: HighCPUDetect(df, col, margin=0, threshold=0.8, **kwargs)),
+	state_pipe_mapping={
+		'high': 		{'X':[f'CPU_{cpu}' for cpu in range(NUM_CORES)], 	'y': TEMPERATURE, 						'op': m1obj, 				'ret': PREDICTION},
+		'norm':[dict(zip([				'X',										'y',								'op',							'ret'				], row)) for row in [
+				[				OVERHEATING_DETECTION_FEATURE,					TEMPERATURE,							m2obj, 				'M2 '+PARTIAL_PREDICTION	],
+				[			(TEMPERATURE,'M2 '+PARTIAL_PREDICTION),					None,				lambda ref, m2pred: ref - m2pred, 		TEMPERATURE_RESIDUE		],
+				[		 				m3_input,  							TEMPERATURE_RESIDUE,						m3obj, 				'M3 '+PARTIAL_PREDICTION	],
+				[	('M2 '+PARTIAL_PREDICTION,'M3 '+PARTIAL_PREDICTION),			None,			lambda m2pred, m3pred: m2pred + m3pred, 		PREDICTION			]
+			]
+		]
+	}
+)
+ddsobj.fit(dataset)
+pred, segmentation_summary, segments, outputs, model_dispatch, partial_predictions = ddsobj.predict(dataset)
+#%% Plots
+#region Dataset plots
 class DatasetPlotter:
 	def __init__(self, plotstyle: PlotStyle):
 		self.plotstyle = plotstyle
-	def plot(self,df,segments=[],savefig_options: dict = {},set_title_options: dict = {}, savefig: bool = True, save_with_title: bool = True, plot_only_cpu_feature: bool = False, plot_only_raw_cpu: bool = False, show_segment: dict = {}, margin = 1):
+	def plot(self,df,segments=[],savefig_options: dict = {},set_title_options: dict = {}, savefig: bool = True, save_with_title: bool = True, plot_only_cpu_feature: bool = False, plot_only_raw_cpu: bool = False, show_segment: dict = {}, margin = 1, color_high_state=True):
 		def sanitize_plotstyle(ps: PlotStyle):
 			if ps is None: ps = get_plotstyle('')
 			if not (isinstance(ps.M2_training_score_history_title, str)): 
 				ps.M2_training_score_history_title = ''
-			if not (isinstance(ps.M2_training_score_history_xlabel, str)): 
-				ps.M2_training_score_history_xlabel = ''
+			if not (isinstance(ps.training_score_history_xlabel, str)): 
+				ps.training_score_history_xlabel = ''
 			if not (isinstance(ps.score_label, str)): 
 				ps.score_label = ''
 			if not (isinstance(ps.M2_training_score_history_filename, str)): 
@@ -325,7 +526,8 @@ class DatasetPlotter:
 			if seg['state']=='high':
 				start = df.index[seg['pos_first']]
 				end = df.index[seg['pos_last']]
-				# for axis in ax: axis.axvspan(start,end,color = "#ff7676ff", alpha=0.4)
+				if color_high_state:
+					for axis in ax: axis.axvspan(start,end,color = "#ff7676ff", alpha=0.4)
 
 		if show_segment:
 			start = max(df.index[show_segment['pos_first']]-margin,df.index[0])
@@ -340,40 +542,8 @@ class DatasetPlotter:
 			save_with_title=save_with_title
 		)
 		plt.show(block=True)
-PS=get_plotstyle('IEEE2025')
 dsplotter=DatasetPlotter(PS)
-#%% Segment time series
-def HighCPUDetect(df, input_col: str, model="l2",margin=0,threshold=0.8):
-	"""
-	Implements high cpu detection logic.
-	
-	:param cpu_percent: array containing CPU usage
-	:param cp: array for change points detected in cpu_percent, listed as indexes for each position.
-	Each position of cp is considered the last index of a segment (should not contain 0).
-	:param margin: number of indexes to consider on each side of each segment investigated in the detection criterion implemented.
-	:param threshold: consider high CPU usage if the average of the segment is greater than this value.
-
-	:return segment: list of detected segments, formatted as dictionaries with the following keys:
-	
-	"""
-	if not model in {"l2", "l1", "rbf", "linear", "normal", "ar"}: raise ValueError(f"Unrecognized model option: {model}")
-	if not input_col in df.columns: raise TypeError(f"{input_col} is not a  column in df")
-	cpu_percent=df[input_col].values
-	algo = rpt.Window(model=model).fit(cpu_percent)
-	change_points = algo.predict(pen=5)
-	segments=[]
-	for cc, pos_last in enumerate(change_points):
-		pos_last=min(pos_last+margin,len(cpu_percent))
-		pos_first=max(change_points[cc-1]+1-margin,0) if cc>0 else 0
-		
-		avg=float(np.average(cpu_percent[pos_first:pos_last]))
-
-		if avg>threshold: 	segments.append({'state':'high','pos_first':pos_first,'pos_last':pos_last,'avg':avg})
-		else:				segments.append({'state':'norm','pos_first':pos_first,'pos_last':pos_last,'avg':avg})
-	return change_points, segments
-bkpts, segments = HighCPUDetect(dataset, OVERHEATING_DETECTION_FEATURE, margin = 5,threshold=0.8)
-#%% Dataset plots
-if plotdataset:=bool(PLOT & PLOT_DATASET): dsplotter.plot(dataset,segments, plot_only_raw_cpu=True,
+if plotdataset:=bool(FLAGS & PLOT_DATASET): dsplotter.plot(dataset,segmentation_summary, plot_only_raw_cpu=True,
 				savefig_options=PlotStyle.compose_savefig_options(
 					fname=PS.full_dataset_filename, 
 					format=PS.save_figure_extension, 
@@ -387,7 +557,7 @@ if plotdataset:=bool(PLOT & PLOT_DATASET): dsplotter.plot(dataset,segments, plot
 				savefig=PS.full_dataset_savefig,
 				save_with_title=PS.save_with_title
 )
-if plotdataset: dsplotter.plot(dataset,segments=segments,show_segment=segments[1],margin=1,plot_only_raw_cpu=True,
+if plotdataset: dsplotter.plot(dataset,segments=segmentation_summary,show_segment=segmentation_summary[1],margin=1,plot_only_raw_cpu=False,
 				savefig_options=PlotStyle.compose_savefig_options(
 					fname=PS.first_temp_peak_detail_filename, 
 					format=PS.save_figure_extension, 
@@ -401,10 +571,11 @@ if plotdataset: dsplotter.plot(dataset,segments=segments,show_segment=segments[1
 				savefig=PS.first_temp_peak_detail_savefig,
 				save_with_title=PS.save_with_title
 )
-
-idx = segments[1]['pos_first']
-df=dataset[range(len(dataset))<idx]			# clip dataset before temperature peak
-if plot_clipped_dataset := bool(PLOT & PLOT_CLIPPED_DATASET) : dsplotter.plot(df,plot_only_cpu_feature=True,
+if plot_clipped_dataset := bool(FLAGS & PLOT_CLIPPED_DATASET):
+	_,summary = HighCPUDetect(dataset, OVERHEATING_DETECTION_FEATURE,margin=5)
+	idx = summary[1]['pos_first']
+	df=dataset[range(len(dataset))<idx]			# clip dataset before temperature peak
+	dsplotter.plot(df,plot_only_cpu_feature=False,
 				savefig_options=PlotStyle.compose_savefig_options(
 					fname=PS.clipped_dataset_filename, 
 					format=PS.save_figure_extension, 
@@ -418,195 +589,73 @@ if plot_clipped_dataset := bool(PLOT & PLOT_CLIPPED_DATASET) : dsplotter.plot(df
 				savefig=PS.clipped_dataset_savefig,
 				save_with_title=PS.save_with_title
 )
-
-#%% Define ambient temperature to be the temperature readout from the first few samples
-def calc_temp_amp(df):
-	return df.loc[df.index<=10,'T_CPU'].mean()
-df2=df[[TEMPERATURE,OVERHEATING_DETECTION_FEATURE]].copy(deep=True)
-
-#%% Define and instantiate DDS model components
-CLIP_RESTRICT = lambda value, limits: np.clip(value, *limits)
-pipeline_plot_kwargs_map={}
-if SELECTED_MODELS & M1_DELAYREGRESSION:
-	def compose_is_time_window_smaller_than_delay(time_index: pd.Index) -> bool:
-		if isinstance(time_index, (pd.DatetimeIndex)):
-			return lambda delay_seconds: (time_index[-1]-time_index[0]).total_seconds() <= delay_seconds
-		if isinstance(time_index, (float, int, np.integer, np.floating)):
-			return lambda delay_seconds: (time_index[-1]-time_index[0]) <= delay_seconds
-		raise TypeError("time_index must be a pandas Index or a numeric array-like.")
-	def compose_to_samples_from_t0(time_index: pd.Index, unit: str='sample', t0=0) -> int:
-		time_values = time_index.to_numpy(dtype=float)
-		if unit == 'sample': t0 = time_index[t0]
-		elif unit == 'index': pass
-		else: raise ValueError(f'Unrecongnized value for unit argument: {unit}')
-		if isinstance(time_index, (pd.DatetimeIndex)):
-			if unit == 'index': t0 = np.datetime64(t0)
-			def _to_samples_from_t0(delay: float) -> int:
-				t_target = t0 + np.timedelta64(int(delay * 1e9), 'ns')
-				idx = np.searchsorted(time_values, t_target, side='left')
-				if idx >= len(time_values): idx = len(time_values) - 1
-				return int(idx)
-		elif isinstance(time_index, (float, int, np.integer, np.floating)):
-			def _to_samples_from_t0(delay: float) -> int:
-				t_target = t0 + delay
-				idx = np.searchsorted(time_values, t_target, side='left')
-				if idx >= len(time_values): idx = len(time_values) - 1
-				return int(idx)
-		else: raise TypeError("time_index must be a pandas Index or a numeric array-like.")
-		return _to_samples_from_t0
-	max_delay_samples = int(timedelta(seconds=1).total_seconds()/DT)
-	row_list = range(len(dataset))
-	row_mask = [(segments[1]['pos_first'] <= row) and (row  < segments[1]['pos_last'] + max_delay_samples) for row in row_list]
-	features = [f'CPU_{cpu}' for cpu in range(NUM_CORES)]
-	# features = [OVERHEATING_DETECTION_FEATURE]	
-	df1 = dataset.loc[row_mask, [TEMPERATURE]+features]
-	param_names = ['delay']+[f'w{ff}' for ff in range(len(features))]
-	limits = [(0,max_delay_samples)] + [Param.Utils.UNDETERMINED_LIMIT]*len(features)
-	restricts=[CLIP_RESTRICT] + [Param.Utils.IDENTITY_RESTRICT]*len(features)
-	types = dict(zip(param_names,[int] + [float for _ in range(len(features))]))
-	m1obj=M1(DelayRegressionStrategy(FCPU=lambda cpu: cpu**2, temp0=df1[TEMPERATURE].iloc[0],
-			params = Param(
-				domain=Param.Domain(limits=limits, restricts=restricts),
-				params=param_names, 
-				types = types),
+#endregion
+#region Plot training history
+if bool(FLAGS & PLOT_M1_TRAINING_HISTORY):
+	score = m1obj.score_history
+	iter = range(len(score))
+	fig, ax = plt.subplots(1, figsize = PS.single_figsize)
+	ax.plot(iter, score)
+	ax.set_xlabel(PS.training_score_history_xlabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+	ax.set_ylabel(PS.score_label, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+	ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)
+	for grid_option in PS.grid_options: ax.grid(**grid_option)
+	if PS.spine_linewidth is not None:
+		for spine in ax.spines.values(): spine.set_linewidth(PS.spine_linewidth)
+	ax.set_facecolor(PS.facecolor)
+	PlotStyle.settitle_and_savefig(fig, ax,
+		savefig_options=PlotStyle.compose_savefig_options(
+			fname=PS.M1_training_score_history_filename, 
+			format=PS.save_figure_extension, 
+			bbox_inches='tight'
 		),
-		optimizer = DelayRegressionOptimizer(),
-		plotstyle=PS
-	)
-	
-	m1obj.fit(plot= bool(PLOT & PLOT_M1_TRAINING_HISTORY) and PLOT_OUTSIDE_PIPELINE, 
-		X = df1.loc[:,df1.columns != TEMPERATURE], 
-		y = df1[TEMPERATURE]
-	)
-	m1obj.predict(plot = bool(PLOT & PLOT_M1_PREDICTION) and PLOT_OUTSIDE_PIPELINE, against=df1[TEMPERATURE],
-		X = df1.loc[:,df1.columns != TEMPERATURE]
-	)
-	pipeline_plot_kwargs_map[m1obj.fit]={'plot':bool(PLOT & PLOT_M1_TRAINING_HISTORY)}
-	pipeline_plot_kwargs_map[m1obj.predict]={'plot':bool(PLOT & PLOT_M1_PREDICTION), 'against':TEMPERATURE}
-if SELECTED_MODELS & M2_1ST_ORDER:
-	derive_inputs = ['TauCPU','TauTemp']
-	behaviors = dict(BetaCPU=Param.Utils.FLAG_DERIVED, BetaTemp=Param.Utils.FLAG_DERIVED)
-	derive_outputs = list(behaviors.keys())
-	unspec_beta_dict = dict(zip(derive_outputs,[None]*len(derive_outputs)))
-	def compose_derive_1order_beta(Dt: float, derive_args: dict):
-		expr = lambda tau: 1- np.exp(-Dt/tau)
-		def derive_fn(**kwargs):
-			outputs = {}
-			for in_arg, out_arg in derive_args.items():
-				outputs[out_arg] = expr(kwargs[in_arg])
-			return outputs
-		return derive_fn
-	m2obj=M2(FirstOrderStrategy(lambda cpu: cpu**2, lambda temp_current, temp_ext: temp_current-temp_ext, temp0=(temp0:=calc_temp_amp(dataset)), temp_amb=temp0,
-			params = Param(behaviors=behaviors, types = float, derive_after_init=True,
-				derive_fn=compose_derive_1order_beta(DT,dict(zip(derive_inputs,derive_outputs))), derive_inputs=derive_inputs, 
-				domain = Param.Domain(limits=dict(KCPU=(8e-2,8), KTemp=(1e-3,0.01), TauCPU=(8e-2,8), TauTemp=(1e-1,10)),restricts=CLIP_RESTRICT),
-				# params=['KCPU', 'KTemp', 'TauCPU', 'TauTemp'] + derive_outputs												# Uncomment to not use starting values
-				# params=dict(KCPU=0.8955001304, KTemp=0.0008084840447, TauCPU=0.7114574813, TauTemp=0.4034388338) | unspec_beta_dict,	# RMSE = 1.249
-				# params=dict(KCPU=0.7994835811, KTemp=0.0012296959998, TauCPU=0.8146071702, TauTemp=0.9513807657) | unspec_beta_dict,	# RMSE = 1.398
-				# params=dict(KCPU=0.9661344533, KTemp=0.0016280793961, TauCPU=0.8349590176, TauTemp=0.9907842974) | unspec_beta_dict,	# RMSE = 1.171
-				# params=dict(KCPU=1.9967875200, KTemp=0.0017382369481, TauCPU=1.7285830177, TauTemp=1.0368206944) | unspec_beta_dict,	# RMSE = 1.104
-				params=dict(KCPU=7.0351605688, KTemp=0.0097643619771, TauCPU=6.1773441730, TauTemp=5.8189918760) | unspec_beta_dict,  # RMSE = 1.072
-			)
+		set_title_options=PlotStyle.compose_set_title_options(
+			label=PS.M1_training_score_history_title, 
+			fontsize=PS.title_fontsize,
+			fontname=PS.label_fontfamily
 		),
-		FirstOrderOptimizer(training_duration=timedelta(seconds=1), composition='any', 
-			training_stop_flags = FirstOrderOptimizer.StopConditions.GLOBAL_MIN_LOSS 
-								| FirstOrderOptimizer.StopConditions.GLOBAL_MAX_DURATION
-					),
-		plotstyle=PS
-	)	
-	m2obj.fit(df2[OVERHEATING_DETECTION_FEATURE].to_frame(), df2[TEMPERATURE], plot= bool(PLOT & PLOT_M2_TRAINING_HISTORY))
-	m2pred = m2obj.predict(df2[OVERHEATING_DETECTION_FEATURE].to_frame(), 		plot= bool(PLOT & PLOT_M2_PARTIAL_PREDICTION), against = df2[TEMPERATURE])
-	pipeline_plot_kwargs_map[m2obj.fit]={'plot':bool(PLOT & PLOT_M2_TRAINING_HISTORY) and PLOT_OUTSIDE_PIPELINE}
-	pipeline_plot_kwargs_map[m2obj.predict]={'plot':bool(PLOT & PLOT_M2_PARTIAL_PREDICTION) and PLOT_OUTSIDE_PIPELINE, 'against':TEMPERATURE}
-if SELECTED_MODELS & (M3_XGB | M3_RNN | M3_LSTM): 
-	m3_source_col = TEMPERATURE
-	df3=df.loc[:,df.columns != m3_source_col].copy(deep=True)
-	df3.loc[:,TEMPERATURE_RESIDUE] = (df2.loc[:,m3_source_col].copy(deep=True)-m2pred).rename(TEMPERATURE_RESIDUE)
-if SELECTED_MODELS & M3_XGB:
-	m3obj=M3(
-		XGBStrategy(n_estimators=1000),
-		plotstyle=PS)
-	# m3obj.cross_validation(plot = bool(PLOT_FLAGS & PLOT_M3_TRAINING_HISTORY),
-	# 	X = df3.loc[:,df3.columns != target_col],	
-	# 	y = df3.loc[:,target_col],
-	# 	)
-	m3obj.fit(plot = bool(PLOT & PLOT_M3_TRAINING_HISTORY) and PLOT_OUTSIDE_PIPELINE,
-		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE],	
-		y = df3.loc[:,TEMPERATURE_RESIDUE],
-		)
-	m3pred = m3obj.predict(plot = bool(PLOT & PLOT_M3_PARTIAL_PREDICTION) and PLOT_OUTSIDE_PIPELINE,			against=df3[TEMPERATURE_RESIDUE],
-		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE]
-		)
-if SELECTED_MODELS & M3_RNN:
-	m3obj=M3(RNNStrategy(nn.RNN, connection = nn.Linear, optimizer = torch.optim.Adam, loss = nn.MSELoss,
-			feature_scaler = StandardScaler,
-			target_scaler = StandardScaler,
-			seq_length = 50,
-			hidden_size = 64,
-			),
-		plotstyle=PS)
-	m3obj.fit(plot = bool(PLOT & PLOT_M3_TRAINING_HISTORY) and PLOT_OUTSIDE_PIPELINE,
-		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE],	
-		y = df3.loc[:,TEMPERATURE_RESIDUE],
-		learning_rate = 0.01,
-		num_epochs = 5,
-		batch_size = (BATCH_SIZE := 5000),
-		)	
-	m3pred = m3obj.predict(plot = bool(PLOT & PLOT_M3_PARTIAL_PREDICTION) and PLOT_OUTSIDE_PIPELINE,			against=df3[TEMPERATURE_RESIDUE],
-		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE],
-		batch_size = BATCH_SIZE,
-		)
-if SELECTED_MODELS & M3_LSTM:
-	m3obj=M3(RNNStrategy(nn.LSTM, connection = nn.Linear, optimizer = torch.optim.Adam, loss = nn.MSELoss,
-			feature_scaler = StandardScaler,
-			target_scaler = StandardScaler,
-			seq_length = 250,
-			hidden_size = 128
-			),
-		plotstyle=PS)
-	m3obj.fit(plot = bool(PLOT & PLOT_M3_TRAINING_HISTORY) and PLOT_OUTSIDE_PIPELINE,
-		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE],	
-		y = df3.loc[:,TEMPERATURE_RESIDUE],
-		learning_rate = 0.001,
-		num_epochs = 20,
-		batch_size = (BATCH_SIZE := 1000),
-		)	
-	m3pred = m3obj.predict(plot = bool(PLOT & PLOT_M3_PARTIAL_PREDICTION) and PLOT_OUTSIDE_PIPELINE,			against=df3[TEMPERATURE_RESIDUE],
-		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE],
-		batch_size = BATCH_SIZE,
-		)
-if SELECTED_MODELS & (M3_XGB | M3_RNN | M3_LSTM): 
-	pipeline_plot_kwargs_map[m3obj.fit]={'plot':bool(PLOT & PLOT_M3_TRAINING_HISTORY)}
-	pipeline_plot_kwargs_map[m3obj.predict]={'plot':bool(PLOT & PLOT_M3_PARTIAL_PREDICTION), 'against':TEMPERATURE_RESIDUE}
-
-
-m3_input = [col for col in dataset.columns if col not in (TEMPERATURE,OVERHEATING_DETECTION_FEATURE)]
-ddsobj = DDS(predict_col=PREDICTION, temp_amb=calc_temp_amp(dataset),
-	segmenter = (OVERHEATING_DETECTION_FEATURE, HighCPUDetect),
-	state_pipe_mapping={
-		'high': 		{'X':[f'CPU_{cpu}' for cpu in range(NUM_CORES)], 	'y': TEMPERATURE, 						'op': m1obj, 				'ret': PREDICTION},
-		'norm':[dict(zip([				'X',									'y',								'op',							'ret'				], row)) for row in [
-				[				OVERHEATING_DETECTION_FEATURE,					TEMPERATURE,							m2obj, 				'M2 '+PARTIAL_PREDICTION	],
-				[			(TEMPERATURE,'M2 '+PARTIAL_PREDICTION),					None,				lambda ref, m2pred: ref - m2pred, 		TEMPERATURE_RESIDUE		],
-				[		 				m3_input,  							TEMPERATURE_RESIDUE,						m3obj, 				'M3 '+PARTIAL_PREDICTION	],
-				[	('M2 '+PARTIAL_PREDICTION,'M3 '+PARTIAL_PREDICTION),			None,			lambda m2pred, m3pred: m2pred + m3pred, 		PREDICTION			]
-			]
-		]
-	}
-)
-ddsobj.fit(dataset, plot_map=pipeline_plot_kwargs_map)
-pred, segmentation_summary, segments = ddsobj.predict(dataset, plot_map=pipeline_plot_kwargs_map)
-#%% Define the plotter for the composite prediction
-class CompositePredictionPlotter:
+		savefig=PS.M1_training_score_history_savefig,
+		save_with_title=PS.save_with_title
+	)
+	plt.show(block=True)
+if bool(FLAGS & PLOT_M2_TRAINING_HISTORY):
+	score = m2obj.score_history
+	iter = range(len(score))
+	fig, ax = plt.subplots(1, figsize = PS.single_figsize)
+	ax.plot(iter, score)
+	ax.set_xlabel(PS.training_score_history_xlabel, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+	ax.set_ylabel(PS.score_label, fontsize=PS.label_fontsize, fontname=PS.label_fontfamily)
+	ax.tick_params(axis='both', labelsize=PS.tick_label_fontsize)
+	for grid_option in PS.grid_options: ax.grid(**grid_option)
+	if PS.spine_linewidth is not None:
+		for spine in ax.spines.values(): spine.set_linewidth(PS.spine_linewidth)
+	ax.set_facecolor(PS.facecolor)
+	PlotStyle.settitle_and_savefig(fig, ax,
+		savefig_options=PlotStyle.compose_savefig_options(
+			fname=PS.M2_training_score_history_filename, 
+			format=PS.save_figure_extension, 
+			bbox_inches='tight'
+		),
+		set_title_options=PlotStyle.compose_set_title_options(
+			label=PS.M2_training_score_history_title, 
+			fontsize=PS.title_fontsize,
+			fontname=PS.label_fontfamily
+		),
+		savefig=PS.M2_training_score_history_savefig,
+		save_with_title=PS.save_with_title
+	)
+	plt.show(block=True)
+#endregion
+class PredictionPlotter:
 	def __init__(self, plotstyle: PlotStyle):
 		self.plotstyle = plotstyle
-	def plot(self, reference, pred):
+	def plot(self, reference, pred, plot_name=None, metadata={}):
 		def sanitize_plotstyle(ps: PlotStyle):
 			if ps is None: ps = get_plotstyle('')
 			if not (isinstance(ps.M2_training_score_history_title, str)): 
 				ps.M2_training_score_history_title = ''
-			if not (isinstance(ps.M2_training_score_history_xlabel, str)): 
-				ps.M2_training_score_history_xlabel = ''
+			if not (isinstance(ps.training_score_history_xlabel, str)): 
+				ps.training_score_history_xlabel = ''
 			if not (isinstance(ps.score_label, str)): 
 				ps.score_label = ''
 			if not (isinstance(ps.M2_training_score_history_filename, str)): 
@@ -641,6 +690,9 @@ class CompositePredictionPlotter:
 		else: 
 			x = range(len(reference))
 			ref = reference
+		if isinstance(pred, pd.Series):
+			pred = pred.values
+		else: pass
 		ax.plot(x, ref, **PS.reference_plot_options)	# Reference line
 		ax.plot(x, pred, **PS.prediction_plot_options)	# Prediction line
 		ax.set_facecolor(PS.facecolor)
@@ -653,22 +705,100 @@ class CompositePredictionPlotter:
 			for spine in ax.spines.values(): spine.set_linewidth(PS.spine_linewidth)
 		ax.annotate(PS.score_label+f' = {SCORE_FUNCTION(ref,pred):0.4f}', xy=(0.99,0.04), xycoords='axes fraction',
 			fontsize=PS.annotate_fontsize, horizontalalignment='right', verticalalignment='bottom')
-		PlotStyle.settitle_and_savefig(fig, ax,
-			savefig_options=PlotStyle.compose_savefig_options(
-				fname=PS.composite_prediction_filename, 
-				format=PS.save_figure_extension, 
-				bbox_inches=PS.savefig_bbox_inches
-			),
-			set_title_options=PlotStyle.compose_set_title_options(
-				label=PS.composite_prediction_title, 
-				fontsize=PS.title_fontsize,
-				fontname=PS.label_fontfamily
-			),
-			savefig=PS.composite_prediction_savefig,
-			save_with_title=PS.save_with_title
-		)
-		plt.show(block=True)
-predplotter=CompositePredictionPlotter(PS)
-if plotpred:=bool(PLOT & PLOT_M2M3_COMPOSITE_PREDICTION): predplotter.plot(df2[TEMPERATURE], m2pred+m3pred)
-if NOPLOT: report_output(SCORE_FUNCTION(df2[TEMPERATURE],m2pred+m3pred))
 
+		text = '\n'.join(f'{k}{v}' for k, v in metadata.items())
+		ax.annotate(text, xy=(0.01,0.96), xycoords='axes fraction',
+			fontsize=PS.annotate_fontsize, horizontalalignment='left', verticalalignment='top')
+
+		# Resolve title and and save options for different cases in plot_name
+		if isinstance(plot_name, str):
+			if plot_name=='M1 Prediction':
+				savefig_options_dict = {
+					'fname':PS.M1_prediction_filename,
+					}
+				set_title_options_dict = {
+					'label':PS.M1_prediction_title
+					}
+				savefig=PS.M1_prediction_savefig
+			elif plot_name=='M2 Partial Prediction':
+				savefig_options_dict = {
+					'fname':PS.M2_partial_prediction_filename,
+					}
+				set_title_options_dict = {
+					'label':PS.M2_partial_prediction_title
+					}
+				savefig=PS.M2_partial_prediction_savefig
+			elif plot_name=='M3 Partial Prediction':
+				savefig_options_dict = {
+					'fname':PS.M3_partial_prediction_filename,
+					}
+				set_title_options_dict = {
+					'label':PS.M3_partial_prediction_title
+					}
+				savefig=PS.M3_crossvalidation_savefig
+			elif plot_name=='Segment':
+					savefig_options_dict = {
+						'fname':'',
+						}
+					set_title_options_dict = {
+						'label':'Segment plot'
+						}
+					savefig=False
+			elif plot_name=='Full Prediction':
+					savefig_options_dict = {
+						'fname':'',
+						}
+					set_title_options_dict = {
+						'label':'Composite prediction'
+						}
+					savefig=False
+			savefig_options_dict |= {
+				'format':PS.save_figure_extension,
+				'bbox_inches':PS.savefig_bbox_inches
+				}
+			set_title_options_dict |= {
+				'fontsize':PS.title_fontsize,
+				'fontname':PS.label_fontfamily
+				}
+			
+			PlotStyle.settitle_and_savefig(fig, ax,
+				savefig_options=PlotStyle.compose_savefig_options(
+					**savefig_options_dict
+				),
+				set_title_options=PlotStyle.compose_set_title_options(
+					**set_title_options_dict
+				),
+				savefig=savefig,
+				save_with_title=PS.save_with_title
+			)
+		plt.show(block=True)
+predplotter=PredictionPlotter(PS)
+#region Plot predictions per segment
+if bool(FLAGS & PLOT_SEGMENTS):
+	for seg, summary in enumerate(segmentation_summary):
+		# Plot partial predictions
+		for model in model_dispatch[seg]['models']:
+			if not isinstance(model, Iterable): model = [model]
+			if (mm:='M2') in model and bool(FLAGS & PLOT_M2_PARTIAL_PREDICTION): 
+				predplotter.plot(reference = segments[seg][TEMPERATURE], pred = partial_predictions[seg][mm], plot_name='M2 Partial Prediction')
+			if (mm:='M3') in model and bool(FLAGS & PLOT_M2_PARTIAL_PREDICTION): 
+				predplotter.plot(reference = outputs[seg][TEMPERATURE_RESIDUE], pred = partial_predictions[seg][mm], plot_name='M3 Partial Prediction')
+			# No need to check for M1
+			# because M1 produces a direct prediction for the entire segment, a 'partial' prediction is equivalent to segment prediction. Defer this plot to segment plotting
+			# if (mm:='M1') in model and bool(FLAGS & PLOT_M1_PREDICTION): pass 
+
+		# Plot segment prediction	
+		metadata = {
+			'segment: ': seg+1,
+			'state: ': summary['state'],
+			'avg. CPU = ': f"{summary['avg']*100:.2f} %",
+			'time window: ': f'[{segments[seg].index[0]:.1f}, {segments[seg].index[-1]:.1f}]',
+			'models dispatched: ': ' + '.join(model_dispatch[seg]['models'])
+		}
+		predplotter.plot(reference = segments[seg][TEMPERATURE], pred = outputs[seg][PREDICTION], plot_name='Segment', metadata=metadata)
+#endregion		
+
+#region Plot full length prediction
+if bool(FLAGS & PLOT_FULL_PREDICTION):
+	predplotter.plot(dataset[TEMPERATURE],pred[PREDICTION], plot_name='Full Prediction')
+#endregion
