@@ -1,35 +1,35 @@
 template:
   validation: yaml
-  source: constant
+  source: literal
   value: "template_IEEE2025.yaml" 
 save_with_title:
   validation: bool
-  source: constant
+  source: literal
   value: False
 save_folder:
   validation: pathstr
-  source: constant
+  source: literal
   value: "Figures/ICAR2025_DDSdevelopment"
 
 # LABEL SUFFIXES
 time_unit_annotation:
   validation: str
-  source: constant
+  source: literal
   value: r' $[s]$'
 temperature_unit_annotation:
   validation: str
-  source: constant
+  source: literal
   value: r' $[°C]$'
 percent_unit_annotation:
   validation: str
-  source: constant
+  source: literal
   value: r' $[\%]$'
 
 # LABELS
 xlabel_timeseries:
   validation: str
   localizable: True
-  source: constant
+  source: literal
   value:
     en: 'Time'
     pt: 'Tempo'
@@ -40,7 +40,7 @@ xlabel_timeseries:
 ylabel_temperature:
   validation: str
   localizable: True
-  source: constant
+  source: literal
   value:
     en: 'Temperature'
     pt: 'Temperatura'
@@ -51,7 +51,7 @@ ylabel_temperature:
 ylabel_temperaturediff:
   validation: str
   localizable: True
-  source: constant
+  source: literal
   value:
     en: 'Temperature difference'
     pt: 'Diferença de temperatura'
@@ -62,7 +62,7 @@ ylabel_temperaturediff:
 ylabel_cpuload:
   validation: str
   localizable: True
-  source: constant
+  source: literal
   value:
     en: 'CPU load'
     pt: 'Utilização da CPU'
@@ -74,77 +74,77 @@ ylabel_cpuload:
 # GRID OPTIONS
 grid_options:
   validation: gridoptions
-  source: constant
+  source: literal
   value:
     - which: 
         validation: str
-        source: constant
+        source: literal
         value: major
       color:
         validation: color
-        source: constant
+        source: literal
         value: "#e0e0e0"
       linewidth:
         validation: linewidth
-        source: constant
+        source: literal
         value:  0.6
     - which: 
         validation: str
-        source: constant
+        source: literal
         value: minor
       color:
         validation: color
-        source: constant
+        source: literal
         value: "#f0f0f0"
       linewidth:
         validation: linewidth
-        source: constant
+        source: literal
         value:  0.3
       linestyle:
         validation: str
-        source: constant
+        source: literal
         value: "--"
 
 # SHARED PLOT OPTIONS
 prediction_plot_options:
   validation: plotoptions
-  source: constant
+  source: literal
   value:
     label:
       validation: str
       localizable: True
-      source: constant
+      source: literal
       value:
         en: 'Prediction'
         pt: 'Predição'
     linewidth:
       validation: linewidth
-      source: constant
+      source: literal
       value: linewidth_thick
     color:
       validation: color
-      source: constant
+      source: literal
       value: C1
 reference_plot_options:
   validation: plotoptions
-  source: constant
+  source: literal
   value:
     label:
       validation: str
       localizable: True
-      source: constant
+      source: literal
       value:
         en: 'Reference'
         pt: 'Referência'
     linewidth:
       validation: linewidth
-      source: constant
+      source: literal
       value: linewidth_thin
     color:
       validation: color
-      source: constant
+      source: literal
       value: C0
 plotarea_facecolor:
   validation: color
-  source: constant
+  source: literal
   value: '#fbfbfb'
