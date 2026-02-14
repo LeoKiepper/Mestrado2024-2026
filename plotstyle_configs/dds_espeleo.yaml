@@ -1,0 +1,250 @@
+configs:
+  - save_folder: Figures\IEEE-TIM-2026
+    language: en
+    yaml:
+      validation: yaml
+      source: literal
+      value: ["layout_two-column.yaml", "template_IEEE2025.yaml", "base_IEEE-TIM-2026.yaml"]
+  - save_folder: Figures\Dissertação
+    language: pt
+    yaml:
+      validation: yaml
+      source: literal
+      value: ["layout_one-column.yaml", "template_IEEE2025.yaml", "base_IEEE-TIM-2026.yaml"]
+
+# FILENAMES AND TITLES
+dataset_full_filename:
+  validation: filename
+  source: literal
+  value: Dataset_full
+dataset_full_title:
+  validation: str
+  source: literal
+  localizable: True
+  value:
+    en: Full length dataset
+    pt: Dataset, duração cheia
+dataset_full_savefig:
+  validation: bool
+  source: literal
+  value: True
+
+first_temp_peak_detail_filename:
+  validation: filename
+  source: literal
+  value: First_temp_peak_detail
+first_temp_peak_detail_title:
+  validation: str
+  source: literal
+  localizable: True
+  value:
+    en: Detailed view for detected high CPU segment
+    pt: Detalhe do segmento de alta utilização de CPU
+first_temp_peak_detail_savefig:
+  validation: bool
+  source: literal
+  value: True
+
+dataset_clipped_filename:
+  validation: filename
+  source: literal
+  value: Dataset_clipped
+dataset_clipped_title:
+  validation: str
+  source: literal
+  localizable: True
+  value:
+    en: Clipped length dataset
+    pt: Dataset até o primeiro superaquecimento
+dataset_clipped_savefig:
+  validation: bool
+  source: literal
+  value: True
+
+M1_training_score_history_filename:
+  validation: filename
+  source: literal
+  value: M1_training_score_history
+M1_training_score_history_title:
+  validation: str
+  source: literal
+  localizable: True
+  value:
+    en: M1 Score History
+    pt: Histórico do score (M1)
+M1_training_score_history_savefig:
+  validation: bool
+  source: literal
+  value: False
+
+M2_training_score_history_filename:
+  validation: filename
+  source: literal
+  value: M2_training_score_history
+M2_training_score_history_title:
+  validation: str
+  source: literal
+  localizable: True
+  value:
+    en: M2 Score History
+    pt: Histórico do score (M2)
+M2_training_score_history_savefig:
+  validation: bool
+  source: literal
+  value: False
+
+M1_prediction_filename:
+  validation: filename
+  source: literal
+  value: M1_prediction
+M1_prediction_title:
+  validation: str
+  source: literal
+  localizable: True
+  value:
+    en: M1 prediction
+    pt: Predição M1
+M1_prediction_savefig:
+  validation: bool
+  source: literal
+  value: True
+
+M2_prediction_filename:
+  validation: filename
+  source: literal
+  value: M2_prediction
+M2_prediction_title:
+  validation: str
+  source: literal
+  localizable: True
+  value:
+    en: M2 prediction
+    pt: Predição M2
+M2_prediction_savefig:
+  validation: bool
+  source: literal
+  value: True
+
+M3_prediction_filename:
+  validation: filename
+  source: literal
+  value: M3_prediction
+M3_prediction_title:
+  validation: str
+  source: literal
+  localizable: True
+  value:
+    en: M3 prediction
+    pt: Predição M3
+M3_prediction_savefig:
+  validation: bool
+  source: literal
+  value: True
+
+M2M3_prediction_filename:
+  validation: filename
+  source: literal
+  value: M2M3_prediction
+M2M3_prediction_title:
+  validation: str
+  source: literal
+  localizable: True
+  value:
+    en: Composite prediction
+    pt: Predição composta
+M2M3_prediction_savefig:
+  validation: bool
+  source: literal
+  value: True
+
+full_length_prediction_filename:
+  validation: filename
+  source: literal
+  value: Full_length_prediction
+full_length_prediction_title:
+  validation: str
+  source: literal
+  localizable: True
+  value:
+    en: Full length prediction
+    pt: Predição sobre toda a série
+full_length_prediction_savefig:
+  validation: bool
+  source: literal
+  value: False
+
+segment_prediction_filename_prefix:
+  validation: filename
+  source: literal
+  value: DDSEspeleo_segment
+segment_prediction_title:
+  validation: str
+  source: literal
+  localizable: True
+  value:
+    en: Segment plot
+    pt: Plot de segmento
+segment_prediction_savefig:
+  validation: bool
+  source: literal
+  value: True
+
+# LABELS
+xlabel_training_score_history:
+  validation: str
+  localizable: True
+  source: literal
+  value:
+    en: 'Iteration'
+    pt: 'Iteração'
+# ylabel_training_score_history is fetched in the plotting script
+
+# OTHER OPTIONS
+overheating_segment_accent_color:
+  validation: color
+  source: literal
+  value: "#ff7676ff"
+overheating_segment_accent_alpha:
+  validation: float
+  source: literal
+  value: 0.4
+
+segment_plot_key_label_map:
+  validation: dict
+  source: literal
+  value:
+    segment:
+      validation: str
+      source: literal
+      localizable: True
+      value:
+        en: 'segment: '
+        pt: 'segmento: '
+    state:
+      validation: str
+      source: literal
+      localizable: True
+      value:
+        en: 'state: '
+        pt: 'estado: '
+    avg_CPU_load:
+      validation: str
+      source: literal
+      localizable: True
+      value:
+        en: 'avg. CPU load = '
+        pt: 'carga da CPU média = '
+    time_window:
+      validation: str
+      source: literal
+      localizable: True
+      value:
+        en: 'time window: '
+        pt: 'faixa de tempo: '
+    dispatch:
+      validation: str
+      source: literal
+      localizable: True
+      value:
+        en: 'models dispatched: '
+        pt: 'modelos usados: '

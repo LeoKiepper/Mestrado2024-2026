@@ -24,8 +24,6 @@ import torch
 import torch.nn as nn
 try: _has_torch = True
 except Exception: _has_torch = False
-import weakref
-_param_domain_map = weakref.WeakKeyDictionary()
 #endregion
 
 #region Helper variables and functions
@@ -841,7 +839,7 @@ class Param:
 		"""
 		names = set(self.names())
 		# prescribed = {n for n, v in self.behaviors.items() if v == self.Consts.FLAG_PRESCRIBED}
-		derived = self.names(self.Utils.FLAG_DERIVED)
+		derived = set(self.names(self.Utils.FLAG_DERIVED))
 
 		input_names = set(params.keys())
 		if reject_derived: assert input_names.isdisjoint(derived), f'Derived parameters not allowed here: {input_names & derived}'
@@ -1300,162 +1298,6 @@ class Param:
 			# Create new Domain
 			return Param.Domain(limits=new_limits, restricts=new_restricts, guesser=other._guesser)
 
-
-@dataclass
-class PlotStyle:
-	"""
-	This class is meant to be used indirectly through the get_plotstlye function
-	"""
-	@staticmethod
-	def compose_savefig_options(fname: str | PathLike | IO, format: str = '', **kwargs) -> dict:
-		fname = str(fname)
-		_, ext = os.path.splitext(fname)
-		if ext: format = ext
-		format = format.lstrip('.').lower()	# lower converts to lowercase
-		fname = f"{fname}.{format}"
-		return {'fname': fname, 'format': format, **kwargs}
-	@staticmethod
-	def compose_set_title_options(label: str, **kwargs):
-		return {'label': label} | kwargs
-	def settitle_and_savefig(fig: plt.Figure, ax: plt.Axes, savefig_options: dict = {}, set_title_options: dict = {}, savefig: bool = True, save_with_title: bool = False):
-			if isinstance(ax, (list, np.ndarray)): ax = ax[0]
-			set_title = lambda: ax.set_title(**set_title_options)
-			if save_with_title: set_title()
-			if savefig: fig.savefig(**savefig_options)
-			if not save_with_title: set_title()
-	layout: str = 'two-column'
-	facecolor: str = '#fbfbfb'
-	label_fontfamily = 'Times New Roman'
-	time_unit_annotation: str = r' $[s]$'
-	temperature_unit_annotation: str = r' $[°C]$'
-	percent_unit_annotation: str = r' $[\%]$'
-	time_unit_annotation: str = ' [s]'
-	temperature_unit_annotation: str = ' [°C]'
-	percent_unit_annotation: str = ' [%]'
-	savefig_bbox_inches: str = 'tight'
-	save_figure_extension: str = 'pdf' # This is used as the default extension, for when the filename does not provide one.
-	save_with_title = False	# if True, the figure title is drawn before the figure is saved and will show on the saved file.
-
-	# =================== Figure specific parameters ===================
-	# figure specific strings that are initialized as empty
-	# strings are to be set by the get_plotstlye function.
-	training_score_history_xlabel: str = ''
-	score_label: str = ''
-
-	M1_training_score_history_title: str = ''
-	M1_training_score_history_filename: str = 'M1_training_score_history'
-	M1_training_score_history_savefig: bool = False
-
-	M2_training_score_history_title: str = ''
-	M2_training_score_history_filename: str = 'M2_training_score_history'
-	M2_training_score_history_savefig: bool = False
-
-	M1_prediction_title: str = ''
-	M1_prediction_filename = 'M1_prediction'
-	M1_prediction_savefig: bool = True
-
-	M2_partial_prediction_title: str = ''
-	M2_partial_prediction_filename: str = 'M2_partial_prediction'
-	M2_partial_prediction_savefig: bool = True
-
-	M3_crossvalidation_title: str = ''
-	M3_crossvalidation_filename: str = 'M3_crossvalidation'
-	M3_crossvalidation_savefig: bool = False
-
-	ylabel_temperature_diff: str = ''
-	M3_partial_prediction_title: str = ''
-	M3_partial_prediction_filename: str = 'M3_partial_prediction'
-	M3_partial_prediction_savefig: bool = True
-
-	full_dataset_title: str = ''
-	full_dataset_filename: str = 'Dataset_full'
-	full_dataset_savefig: bool = True
-
-	clipped_dataset_title: str = ''
-	clipped_dataset_filename: str = 'Dataset_clipped'
-	clipped_dataset_savefig: bool = False
-
-	CPU_load_feature_in_legend: str = ''
-	first_temp_peak_detail_title: str = ''
-	first_temp_peak_detail_filename: str = 'First_temp_peak_detail'
-	first_temp_peak_detail_savefig: bool = True
-
-	full_prediction_title: str = ''
-	full_prediction_filename: str = 'full_prediction'
-	full_prediction_savefig: bool = True
-
-	def __post_init__(self):		# Layout specific parameters
-		if self.layout == 'two-column':
-			self.single_figsize = (3.6,2.7)	# matplotlib default is (6.4,4.8) inches
-			self.multiple_figsize: callable = lambda n: (3.6, 2.6 * n)
-			# fontsizes are given in pt. 	1 in = 72 pts
-			self.label_fontsize: float = 10
-			self.title_fontsize: float = 12
-			self.annotate_fontsize: float = 8
-			self.legend_fontsize: float = 7
-			self.tick_label_fontsize: float = 7
-
-			self.linewidth_thin: float = 0.5
-			self.linewidth_medium: float = 1
-			self.linewidth_thick: float = 1.5
-			self.spine_linewidth: float = self.linewidth_thin
-			self.prediction_plot_options: dict = {'lw':self.linewidth_thick, 'label':'Prediction', 'color':'C1'}
-			self.reference_plot_options: dict = {'lw':self.linewidth_thin, 'label':'Reference', 'color':'C0'}
-			self.grid_options: list = [
-				{'which': 'major', 'color': '#e0e0e0', 'linewidth': 0.6},
-				{'which': 'minor', 'color': '#f0f0f0', 'linewidth': 0.3, 'ls': '--'}
-			]
-		else:			# 'one-column'
-			self.multiple_figsize: callable = lambda n: (6, 2.5 * n)
-			self.label_fontsize: float = 12
-			self.title_fontsize: float = 16
-			self.annotate_fontsize: float = 10
-			self.legend_fontsize: float = 10
-			self.tick_label_fontsize: float = 10
-
-			self.linewidth_thin: float = 0.5
-			self.linewidth_medium: float = 1
-			self.linewidth_thick: float = 1.5
-			self.spine_linewidth: float = self.linewidth_thin
-			self.prediction_plot_options: dict = {'lw':self.linewidth_thick, 'label':'Prediction', 'color':'C1'}
-			self.reference_plot_options: dict = {'lw':self.linewidth_thin, 'label':'Reference', 'color':'C0'}
-			self.grid_options: list = [
-				{'which': 'major', 'color': '#e0e0e0', 'linewidth': 0.6},
-				{'which': 'minor', 'color': '#f0f0f0', 'linewidth': 0.3, 'ls': '--'}
-			]
-	def localize(self, lang='en'):	# Localization for various strings
-		self.prediction_plot_options['label'] = {'en': 'Prediction', 'pt': 'Predição'}[lang]
-		self.reference_plot_options['label'] = {'en': 'Reference', 'pt': 'Referência'}[lang]
-		self.M1_training_score_history_title = {'en': 'M1 Score History', 'pt': 'Histórico do score (M1)'}[lang]
-		self.M2_training_score_history_title = {'en': 'M2 Score History', 'pt': 'Histórico do score (M2)'}[lang]
-		self.training_score_history_xlabel = {'en': 'Iteration', 'pt': 'Iteração'}[lang]
-		self.xlabel_time = {'en': 'Time', 'pt': 'Tempo'}[lang] + self.time_unit_annotation
-		self.ylabel_temperature = {'en': 'CPU Temperature', 'pt': 'Temperatura da CPU'}[lang] + self.temperature_unit_annotation 
-		self.ylabel_temperature_diff = {'en': 'Temperature difference', 'pt': 'Diferença de temperatura'}[lang] + self.temperature_unit_annotation
-		self.ylabel_cpu_load = {'en': 'CPU load', 'pt': 'Utilização da CPU'}[lang] + self.percent_unit_annotation
-		self.M1_prediction_title = {'en': 'M1 prediction', 'pt': 'Predição M1'}[lang]
-		self.M2_partial_prediction_title = {'en': 'M2 prediction', 'pt': 'Predição M2'}[lang]
-		self.M3_partial_prediction_title = {'en': 'M3 prediction', 'pt': 'Predição M3'}[lang]
-		self.M3_crossvalidation_title = {'en': 'M3 Cross-validation', 'pt': 'Validação cruzada M3'}[lang]
-		self.full_dataset_title = {'en': 'Full length dataset','pt':'Dataset em toda duração'}[lang]
-		self.clipped_dataset_title = {'en': 'Clipped length dataset','pt':'Dataset até o primeiro superaquecimento'}[lang]
-		self.first_temp_peak_detail_title = {'en': 'Detailed view for detected high CPU segment','pt':'Detalhe do segmento de alta utilização de CPU'}[lang]
-		self.CPU_load_feature_in_legend = {'en':'CPU load feature','pt':'Atributo da utilização da CPU'}[lang]
-		self.full_prediction_title = {'en': 'Full length prediction', 'pt': 'Predição em todo o dataset'}[lang]
-def get_plotstyle(publication):
-
-	# Set publications specific parameter tweaks 
-	match publication:
-		case 'IEEE2025': 	
-			ps = PlotStyle(layout='two-column')
-			ps.localize(lang='en')
-		case _:	# None of the above		
-			ps = PlotStyle(layout='two-column')
-			ps.localize(lang='en')
-
-	ps.score_label = infer_score_label(SCORE_FUNCTION)
-
-	return ps
 def infer_score_label(score_fn):
 	SCORING_LABELS = {
 		'root_mean_squared_error': 'RMSE',
@@ -1490,13 +1332,6 @@ def infer_score_label(score_fn):
 				if key.lower() in name.lower():
 					return label
 	return "Score"
-def is_valid_font(fontname):
-    try:
-        prop = FontProperties(family=fontname)
-        fontpath = findfont(prop, fallback_to_default=False)
-        return True
-    except Exception:
-        return False
 class FunctionWrapper(ABC):
 	_model: 'M1 | M2 | M3'		# type: ignore
 	def __init__(self):
@@ -1512,7 +1347,7 @@ class FunctionWrapper(ABC):
 #endregion
 
 
-class DDS(BaseEstimator, RegressorMixin):
+class PipelineProcessor(BaseEstimator, RegressorMixin):
 	def _merged_output(self, seg: Iterable=None):
 		input_seg = seg
 		if input_seg==None: segs = range(len(self.segmentation_summary))
@@ -1665,7 +1500,7 @@ class DDS(BaseEstimator, RegressorMixin):
 		# Validate pipelines
 		if any(invalid:=[not isinstance(state, str) for state in state_pipe_mapping.keys()]): raise TypeError(f"Found non-str state names: {invalid}")
 		for state, pipe in state_pipe_mapping.items():
-			try: state_pipe_mapping[state]=DDS._validate_pipeline(pipe)
+			try: state_pipe_mapping[state]=PipelineProcessor._validate_pipeline(pipe)
 			except (ValueError, TypeError, AssertionError) as e: raise type(e)(f"Error validating normal_pipe: {e}") from e
 		self.state_pipe_mapping = state_pipe_mapping
 
@@ -1719,7 +1554,7 @@ class M1(BaseEstimator, RegressorMixin):
 	def score_history(self):
 		return self._optimizer.get_score_history()
 
-	def __init__(self, kernel: 'DelayRegressionStrategy', optimizer: 'FirstOrderOptimizer', random_state = None, plotstyle: PlotStyle = None):
+	def __init__(self, kernel: 'DelayRegressionStrategy', optimizer: 'FirstOrderOptimizer', random_state = None):
 		"""
 		:param kernel: Function, as a FunctionWrapper object, containing logic and calculations that will produce predictions.
 		:param loss: Loss function, as a FunctionWrapper object, to be used in training the model.
@@ -1728,7 +1563,6 @@ class M1(BaseEstimator, RegressorMixin):
 		self._kernel = kernel;			self._kernel._model = self
 		self._optimizer = optimizer;	self._optimizer._model = self
 		
-		self.plotstyle = plotstyle
 		# Hyperparamaters
 		self.random_state = random_state
 	def get_params(self, deep=True):
@@ -1984,7 +1818,6 @@ class DelayRegressionOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 				composition='any',
 				training_stop_flags: int = StopConditions.GLOBAL_MAX_ITERATIONS | StopConditions.GLOBAL_MIN_LOSS,
 				stale_path_flags: int = StopConditions.STALE_PATH_MAX_ITER | StopConditions.STALE_PATH_AVG_GRADIENT,
-				plotstyle: PlotStyle = None
 				):
 		"""
 		Initializes the Optimizer with a learning rate, maximum iterations, and tolerance.
@@ -2112,7 +1945,7 @@ class M2(BaseEstimator, RegressorMixin):
 	def score_history(self):
 		return self._optimizer.get_score_history()
 
-	def __init__(self, kernel: 'FirstOrderStrategy', optimizer: 'FirstOrderOptimizer', random_state = None, plotstyle: PlotStyle = None):
+	def __init__(self, kernel: 'FirstOrderStrategy', optimizer: 'FirstOrderOptimizer', random_state = None):
 		"""
 		:param kernel: Function, as a FunctionWrapper object, containing logic and calculations that will produce predictions.
 		:param loss: Loss function, as a FunctionWrapper object, to be used in training the model.
@@ -2121,7 +1954,6 @@ class M2(BaseEstimator, RegressorMixin):
 		self._kernel = kernel;			self._kernel._model = self
 		self._optimizer = optimizer;	self._optimizer._model = self
 		
-		self.plotstyle = plotstyle
 		# Hyperparamaters
 		self.random_state = random_state
 	def get_params(self, deep=True):
@@ -2164,7 +1996,7 @@ class FirstOrderStrategy(FunctionWrapper):
 		"""
 		return self._params.to_dict(Param.Utils.FLAG_PRESCRIBED)
 	def guess_params(self) -> dict:
-		return self._params.guess(inplace=False)
+		return self._params.guess(inplace=False, derive=False)
 	def _next_temp(self, cpu_current, temp_current, temp_ext):
 		r"""
 		Computes the next temperature incrementally based on the current CPU usage, 
@@ -2345,8 +2177,9 @@ class FirstOrderOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 			if self.current_score > self._best_score: 	self._set_best_model()
 
 			# calculate params for next iteration
-			if self.stale_path_condition(self): 		next_params = self._model._kernel.guess_params(); self.iterations_on_this_path = 0
-			else: next_params = self.optimize(self._model._kernel.get_model_params())
+			if self.stale_path_condition(self):
+				next_params = self._model._kernel.guess_params(); self.iterations_on_this_path = 0
+			else: next_params = self.step(self._model._kernel.get_model_params())
 
 			self._model._kernel.set_model_parameters(next_params)
 			self.current_iteration += 1
@@ -2375,7 +2208,7 @@ class FirstOrderOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 		self._current_prediction = self._model._kernel.predict(X, self._temp0)
 		rmse = SCORE_FUNCTION(y, self._current_prediction)
 		return -rmse
-	def optimize(self, params: dict) -> dict:
+	def step(self, params: dict) -> dict:
 			"""
 			Implements a single step of Stochastic Gradient Descent (SGD) to calculate the next set of candidate parameters.
 			:param params: Current parameters of the M2Kernel as a Params object.
@@ -2414,7 +2247,6 @@ class FirstOrderOptimizer(FunctionWrapper, BaseEstimator, RegressorMixin):
 				composition='any',
 				training_stop_flags: int = StopConditions.GLOBAL_MAX_ITERATIONS | StopConditions.GLOBAL_MIN_LOSS,
 				stale_path_flags: int = StopConditions.STALE_PATH_MAX_ITER | StopConditions.STALE_PATH_AVG_GRADIENT,
-				plotstyle: PlotStyle = None
 				):
 		"""
 		Initializes the Optimizer with a learning rate, maximum iterations, and tolerance.
@@ -2545,7 +2377,7 @@ class M3(BaseEstimator, RegressorMixin):
 		# else:	# Implement for RNNStrategy and others that defer split
 		return test_idx, y_preds, scores
 
-	def __init__(self, strategy: 'M3Strategy', plotstyle=None):
+	def __init__(self, strategy: 'M3Strategy'):
 		self.strategy: M3Strategy = strategy
 	def get_params(self, deep=True):
 		return self.strategy.get_params(deep=deep)
@@ -3162,7 +2994,6 @@ if __name__ == "__main__":
 			training_stop_flags = FirstOrderOptimizer.StopConditions.GLOBAL_MIN_LOSS 
 								| FirstOrderOptimizer.StopConditions.GLOBAL_MAX_DURATION 
 			),
-		plotstyle=get_plotstyle('IEEE2025')
 	)
 	m2obj.fit(plot = 							(PP := True),
 		X = df2['CPU'].to_frame(),
@@ -3177,7 +3008,6 @@ if __name__ == "__main__":
 
 	m3obj = M3(
 		XGBStrategy(n_estimators=1000, early_stopping_rounds=20, learning_rate=0.001),
-		plotstyle=get_plotstyle('IEEE2025')
 	)
 	m3obj.cross_validation(plot = 	(PP := True),
 		X = df3.loc[:,df3.columns != TEMPERATURE_RESIDUE],	
