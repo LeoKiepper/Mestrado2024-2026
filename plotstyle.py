@@ -1,63 +1,222 @@
 import matplotlib.pyplot as plt
 import os
 from os import PathLike
-from typing import IO
+from typing import IO, Any, List
 import numpy as np
 import yaml
-from parse import parse
 from plotstyle_validators import *
-from plotstyle_validators import UnkownValidator,ParseError
-import plotstyle
-
+from dataclasses import dataclass
+import plotstyle_interface as PSIF
 import warnings	# leave this import last for neat folding of the import block
-def custom_showwarning(message, category, filename, lineno, file=None, line=None):
-	print(f"{lineno}: {message}")
-warnings.showwarning = custom_showwarning
+PSIF.configure_tags()
+warnings.showwarning = PSIF.custom_showwarning
 
-# Standardized strings used for yaml files and properties
-ROLE_BASE = 'base'
-ROLE_TEMPLATE = 'template'
-ROLE_LAYOUT = 'layout'
+YAML_FILE_NOT_FOUND_MSG = "YAML file '{filename}' not found in '{configs_folder}' or its subdirectories."
+TYPE_ERROR_MSG = "'configs' must either be a list of dicts or a dict"
+@dataclass
+class _ParseContext:
+	explicitly_kept: set
+	explicitly_delete: set
+	marked_for_delete: set
+	field_props: dict
+	affix: dict
+	file_stack: list 	# for debugging
+	def __init__(self):
+		self.explicitly_kept = set()
+		self.explicitly_deleted = set()
+		self.marked_for_delete = set()
+		self.field_props = dict()
+		self.affix = dict()
+		self.file_stack = []
+
+# Helper functions
+def _load_yaml(path):
+	try:
+		with open(path, 'r', encoding='utf-8') as f:
+			data = yaml.safe_load(f) or {}
+	except yaml.YAMLError: raise yaml.YAMLError(f"Error when loading yaml file {path}")
+	if not isinstance(data, dict): raise TypeError("Top-level YAML must be a mapping")
+	return data
+def _resolve_yaml_path(filename: str, configs_folder) -> str:
+	basename = os.path.basename(filename)
+	if not os.path.isabs(filename):
+		os.makedirs(configs_folder, exist_ok=True)
+		found = False
+		for root, _, files in os.walk(configs_folder):
+			if basename in files:
+				filename = os.path.normpath(os.path.join(root, basename))
+				found = True
+				break
+		if not found: raise FileNotFoundError(YAML_FILE_NOT_FOUND_MSG.format(filename=filename,configs_folder=configs_folder))
+	if not os.path.isfile(filename): raise FileNotFoundError(YAML_FILE_NOT_FOUND_MSG.format(filename=filename,configs_folder=configs_folder))
+	_, extension = os.path.splitext(filename)
+	if not extension == ".yaml": raise ValueError(f"file {basename} is not yaml")
+	return filename
+def _yaml_parse_from_dict(handle: dict, ctx: _ParseContext, configs_folder: str, dump_to=None, read_from=None):
+	def _dump_to_dict(local_handle: dict, dump_to: dict = {}, read_from: dict = {}):
+		local_handle = dict(local_handle)
+		local_handle = PSIF.ignore_configs(local_handle)
+
+		for key, raw_prop in local_handle.items():
+			prop = PSIF.normalize_prop(key, raw_prop)
+			ctx.field_props[key] = prop
+			if prop[PSIF.PropKeys.VALIDATION] == PROP_STRING_VALIDATION_YAML:
+				try:
+					value = PSIF.fetch_value(key, prop, dump_to, read_from)[1]
+					paths = value if isinstance(value, list) else [value]
+
+					for path in paths:
+						ctx.file_stack.append(path)
+						resolved = _resolve_yaml_path(path, configs_folder)
+						included = _load_yaml(VALIDATORS[PROP_STRING_VALIDATION_YAML].parse(resolved))
+						dump_to.update(_dump_to_dict(included, dump_to=dump_to, read_from=dump_to))
+						ctx.file_stack.pop()
+				except Exception as e:
+					warnings.warn(PSIF.IGNORE_FIELD_MSG.format(error=e, key=key))
+					continue
+			else:
+				try:
+					parsed_value = PSIF.parse_prop(key, prop, dumper=_dump_to_dict, dump_to=dump_to, read_from=read_from)
+					dump_to.update({key: parsed_value})
+				except Exception as e:
+					warnings.warn(PSIF.IGNORE_FIELD_MSG.format(error=e, key=key))
+					continue
+				PSIF.register_affixable(affix_dict=ctx.affix,key=key, prop=prop, dumper=_dump_to_dict,dump_to=dump_to, read_from=read_from)
+			if PSIF.PropKeys.KEEP in prop:
+				try:
+					keep_val = prop[PSIF.PropKeys.KEEP]
+					bv = VALIDATORS[PROP_STRING_VALIDATION_BOOL]
+					if bv.validate(keep_val):
+						parsed_keep = bv.parse(keep_val)
+						if parsed_keep: ctx.explicitly_kept.add(key)
+						else: ctx.explicitly_deleted.add(key)
+					# malformed keep => ignore
+				except Exception:
+					pass
+		return dump_to
+
+	if dump_to is None: dump_to = {}
+	if read_from is None: read_from = dump_to
+	return _dump_to_dict(handle, dump_to=dump_to, read_from=read_from)
+def _yaml_parse_single_file(entry_file: str, ctx: _ParseContext, configs_folder: str):
+	entry_file = _resolve_yaml_path(filename = entry_file, configs_folder=configs_folder)
+	handle = _load_yaml(entry_file)
+	if not isinstance(handle, dict): raise TypeError("Top-level YAML must be a mapping")
+	return _yaml_parse_from_dict(handle=handle, ctx=ctx, configs_folder=configs_folder)
+def _yaml_parse_list(entry_list: List[str], ctx: _ParseContext, configs_folder: str):
+	if not isinstance(entry_list, list): raise TypeError("Received non-list argument")
+	merged = {}
+	for file in entry_list:
+		entry_file = _resolve_yaml_path(file, configs_folder)
+		handle = _load_yaml(entry_file)
+		merged = _yaml_parse_from_dict(
+			handle=handle,
+			ctx=ctx,
+			configs_folder=configs_folder,
+			dump_to=merged,
+			read_from=merged
+		)
+	return merged
+
+def _resolve_marked_for_delete(ctx: _ParseContext):
+	marked = set()
+	# Derive referenced fields
+	referenced = set()
+	for key, prop in ctx.field_props.items():
+		if prop.get(PSIF.PropKeys.SOURCE) == PSIF.PropKeys.SOURCE_OPTIONS.VALUE_FROM_FIELD:
+			referenced.add(prop.get(PSIF.PropKeys.VALUE))
+	# Infer keep using schema defaults
+	for field in referenced:
+		prop = ctx.field_props.get(field)
+		if prop is None:
+			if not PSIF.PropSchema.default_keep(): marked.add(field)
+			continue
+		source = prop.get(PSIF.PropKeys.SOURCE)
+		inferred_keep = PSIF.PropSchema.default_keep_for_source(source)
+		if not inferred_keep: marked.add(field)
 
 
+	marked |= ctx.explicitly_deleted
+	marked -= ctx.explicitly_kept
+	ctx.marked_for_delete = marked
 
-PROP_STRING_SOURCE = 'source'
-PROP_STRING_SOURCE_VALUE_FROM_LITERAL = 'literal'
-PROP_STRING_SOURCE_VALUE_FROM_FIELD = 'field'
-PROP_STRING_KEEP = 'keep'
-KEEP_DEFAULT_VALUE_FROM_FIELD = False
-KEEP_DEFAULT_VALUE_FROM_LITERAL = True
-KEEP_DEFAULT_CLASS_LEVEL = False
-SOURCE_TYPE_DEFAULT_KEEP = {	# Add new PROP_STRING_SOURCE types here
-	PROP_STRING_SOURCE_VALUE_FROM_LITERAL: True,
-	PROP_STRING_SOURCE_VALUE_FROM_FIELD: False,
-}
+class PSTemplate:
+	def __init__(self, base_yaml: dict, configs: list, **ps_kwargs):
+		if not isinstance(configs, list):
+			if not isinstance(configs, dict):
+				raise TypeError(TYPE_ERROR_MSG)
+			configs = [configs]
+		if not all([isinstance(item,dict) for item in configs]): raise TypeError(TYPE_ERROR_MSG)
+		if not isinstance(base_yaml, dict): raise TypeError("'base_yaml' must be a mapping (dict)")
+		self.base_yaml = base_yaml
+		self.configs = configs
+		# kwargs to forward when constructing PlotStyle from a yaml dict
+		self._ps_kwargs = ps_kwargs
 
-PROP_STRING_VALUE = 'value'
-PROP_STRING_SUFFIX = 'suffix'
-PROP_STRING_PREFIX = 'prefix'
-AFFIX_TYPES = [PROP_STRING_SUFFIX, PROP_STRING_PREFIX]
-AFFIX_KEY_FORMAT = "{key}__{affix}__"
-PROP_STRING_LOCALIZABLE = 'localizable'
-LOCALIZATION_ENGLISH = 'en'
-LOCALIZATION_PROTUGUESE = 'pt'
+	def expand(self):
+		CONFIG_KEY='config'
+		CTX_KEY='ctx'
+		payloads = [{} for _ in self.configs]
+		for cc, cfg in enumerate(self.configs):
+			cfg_norm = {k: PSIF.normalize_prop(k, v) for k, v in cfg.items()}
+			ctx = _ParseContext()
+			merged = {}
+			for key, prop in cfg_norm.items():
+				if key == PSIF.PropKeys.YAML:
+					#region TODO: Test if it is really necessary to reject source: field 
+					# if not cfg_norm[PSIF.PropKeys.YAML][PSIF.PropKeys.SOURCE_OPTIONS.VALUE_FROM_LITERAL]: 
+					# 	warnings.warn(PSIF.IGNORE_FIELD_MSG.format(key=k,error=f"'{PSIF.PropKeys.CONFIGS}' field only accepts '{PSIF.PropKeys.SOURCE_OPTIONS.VALUE_FROM_LITERAL}' source")) 
+					# else: 
+					#endregion
+					files = PSIF.fetch_value(
+						PSIF.PropKeys.YAML,
+						prop,
+						read_from=self.base_yaml
+					)[1]
+					files = files if isinstance(files, list) else [files]
+					parsed = _yaml_parse_list(
+						entry_list=files,
+						ctx=ctx,
+						configs_folder=self._ps_kwargs.get(
+							'configs_folder',
+							PSIF.DEFAULT_CONFIGS_FOLDER
+						)
+					)
+					merged.update(parsed)
+				else:
+					merged[key] = prop
+			payloads[cc][CTX_KEY] = ctx
+			payloads[cc][CONFIG_KEY] = merged
+		for pp, payload in enumerate(payloads):
+			virtual_yaml_dict = {}
+			virtual_yaml_dict.update(payload.get(CONFIG_KEY,{}))
+			virtual_yaml_dict.update(self.base_yaml)
+			if PSIF.PropKeys.LANGUAGE in virtual_yaml_dict:
+				language = PSIF.fetch_value(PSIF.PropKeys.LANGUAGE,virtual_yaml_dict[PSIF.PropKeys.LANGUAGE])[1]
+			else: language =  PSIF.PropKeys.LANGUAGE_OPTIONS.DEFAULT
+			kwargs = {k:v for k,v in self._ps_kwargs.items() if k!=PSIF.PropKeys.LANGUAGE}
+			yield PlotStyle(yaml_dict=virtual_yaml_dict, ctx = payload.get(CTX_KEY,_ParseContext()), language=language, **kwargs)
 
-def unpack_affix_key(key: str, pattern: str = AFFIX_KEY_FORMAT) -> tuple[str, str]:
-	result = parse(pattern, key)
-	if result:
-		return result['key'], result['affix']
-	raise ValueError(f"Key '{key}' does not match format '{pattern}'")
+# Entry points
+def load_plotstyle(yaml_dict: dict=None, file: str=None, yaml_list: list=None, master=None, 
+		language: str = PSIF.PropKeys.LANGUAGE_OPTIONS.DEFAULT, 
+		configs_folder: str=PSIF.DEFAULT_CONFIGS_FOLDER, 
+		base_folder: str=None, 
+		keep_all_fields: bool = PSIF.PropSchema.default_keep(),
+	):
+	PlotStyle._input_validate(yaml_dict=yaml_dict,yaml_file=file, yaml_list=yaml_list, master=master, language=language, configs_folder=configs_folder, base_folder=base_folder, keep_all_fields=keep_all_fields, ctx=None)
 
-class InvalidSourceType(Exception):
-	pass
-class SourceFieldMissing(Exception):
-	pass
+	if file is not None:
+		file = _resolve_yaml_path(file, configs_folder=configs_folder)
+		yaml_dict = _load_yaml(file)
+		yaml_dict, configs = PSIF.ignore_configs(yaml_dict), PSIF.pop_configs(yaml_dict)
+		if configs is not None:
+			return PSTemplate(yaml_dict, configs, language=language, configs_folder=configs_folder, base_folder=base_folder, keep_all_fields=keep_all_fields)
+		return PlotStyle(yaml_dict=yaml_dict, language=language, configs_folder=configs_folder, base_folder=base_folder, keep_all_fields=keep_all_fields)
 
-
+	# elif yaml_list is not None:
+	# elif master is not None and isinstance(master, PlotStyle):
 class PlotStyle:
-	"""
-	This class is meant to be used indirectly through the get_plotstlye function
-	"""
 	@staticmethod
 	def compose_savefig_options(fname: str | PathLike | IO, format: str = '', **kwargs) -> dict:
 		fname = str(fname)
@@ -67,307 +226,55 @@ class PlotStyle:
 		fname = f"{fname}.{format}"
 		return {'fname': fname, 'format': format, **kwargs}
 	@staticmethod
-	def compose_set_title_options(label: str, **kwargs):
-		return {'label': label} | kwargs
+	def compose_set_title_options(label: str, **kwargs): return {'label': label} | kwargs
+	@staticmethod
 	def settitle_and_savefig(fig: plt.Figure, ax: plt.Axes, savefig_options: dict = {}, set_title_options: dict = {}, savefig: bool = True, save_with_title: bool = False):
-			if isinstance(ax, (list, np.ndarray)): ax = ax[0]
-			set_title = lambda: ax.set_title(**set_title_options)
-			if save_with_title: set_title()
-			if savefig: fig.savefig(**savefig_options)
-			if not save_with_title: set_title()
-	def _delete_marked_fields(self):
-		for key in self.__marked_for_delete__:
-			if key in self.__params__: self.__params__.pop(key)
-	def _yaml_parse(self, entry_file: str) -> dict:
-		YAML_LOADING_ERROR_MSG = "Error when loading yaml file {path}"
-		PARSE_ERROR_MSG = "Failed to parse key '{key}' with validator '{validator}': {error}"
-		UNKNOWN_VALIDATOR_MSG = "Unknown validator"
-		IGNORE_FIELD_MSG = "[INFO]: Error raised when parsing field '{key}'. Field was ignored and will not load onto the object.\n\t{error}."
-		def _load_yaml(path):
-			try:
-				with open(path, 'r') as f:
-					return yaml.safe_load(f)
-			except yaml.YAMLError:
-				raise yaml.YAMLError(YAML_LOADING_ERROR_MSG.format(path=path))
-		def _dump_to_dict(handle: dict, dump_to: dict = {}, read_from: dict ={}):
-			def _fetch_value(key: str, prop: dict):
-				if not PROP_STRING_SOURCE in prop.keys(): raise SourceFieldMissing
-				if prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_LITERAL: return (key,prop[PROP_STRING_VALUE])
-				elif prop[PROP_STRING_SOURCE] == PROP_STRING_SOURCE_VALUE_FROM_FIELD: 
-					_assess_for_delete(prop[PROP_STRING_VALUE], prop, is_referenced=True)
-					return (prop[PROP_STRING_VALUE],(dump_to | read_from)[prop[PROP_STRING_VALUE]])
-				else: raise InvalidSourceType
-			def _parse_prop(key: str, prop: dict):
-				try:
-					validator = VALIDATORS.get(prop[PROP_STRING_VALIDATION])
-					if not validator: raise UnkownValidator(UNKNOWN_VALIDATOR_MSG.format(validator=prop[PROP_STRING_VALIDATION], key=key))
-					return validator.parse(_fetch_value(key, prop)[1], **{
-						CONTEXT_FIELD_PARSER_FUNC: lambda handle: _dump_to_dict(handle, dump_to={}, read_from=dump_to)
-						})
-				except Exception as e:
-					raise ParseError(PARSE_ERROR_MSG.format(key=key, validator=prop[PROP_STRING_VALIDATION], error=e))
-			def _register_localizable(key: str, prop: dict):
-				if PROP_STRING_LOCALIZABLE in prop.keys() and prop[PROP_STRING_LOCALIZABLE]:
-					self.__localization__[key] = _fetch_value(key,prop)[1]
-			def _register_affixable(key: str, prop: dict, affix_type: str):
-				if affix_type in prop and prop[affix_type] != {}:
-					new_key = AFFIX_KEY_FORMAT.format(key=key, affix=affix_type)
-					self.__affix__.update({new_key: _parse_prop(key, prop[affix_type])})
-					_register_localizable(new_key, prop[affix_type])				
-			def _assess_for_delete(key: str, prop: dict, is_referenced: bool = False):
-				def _mark(key, prop):
-					if key not in self.__marked_for_delete__: self.__marked_for_delete__.append(key)
-				is_keep_specified = PROP_STRING_KEEP in prop
-				try: is_fetched_keep_positive = VALIDATORS[PROP_STRING_VALIDATION_BOOL].sanitize(prop[PROP_STRING_KEEP])
-				except: is_fetched_keep_positive = False
-
-				match prop[PROP_STRING_SOURCE]:
-					case plotstyle.PROP_STRING_SOURCE_VALUE_FROM_LITERAL:
-						is_inferred_keep_positive = SOURCE_TYPE_DEFAULT_KEEP[PROP_STRING_SOURCE_VALUE_FROM_LITERAL]
-					case plotstyle.PROP_STRING_SOURCE_VALUE_FROM_FIELD:
-						is_inferred_keep_positive = is_referenced and not SOURCE_TYPE_DEFAULT_KEEP[PROP_STRING_SOURCE_VALUE_FROM_LITERAL]
-					case _:
-						is_inferred_keep_positive = KEEP_DEFAULT_CLASS_LEVEL
-				keep = 	is_keep_specified and is_fetched_keep_positive or not is_keep_specified and is_inferred_keep_positive
-				if not keep: _mark(key, prop)
-
-			for key, prop, in handle.items():				
-				if prop[PROP_STRING_VALIDATION] == PROP_STRING_VALIDATION_YAML:  # Treat recursive yaml parsing separately
-					try:
-						path = _fetch_value(key, prop)[1]	# First call self.resolve_yaml_path, then validate
-						self.__file_stack__.append(path)							# for debugging
-						path = self._resolve_yaml_path(path)
-						dump_to.update(_dump_to_dict(_load_yaml(VALIDATORS[PROP_STRING_VALIDATION_YAML].parse(path)), dump_to=dump_to))
-						self.__file_stack__ = self.__file_stack__[:-1]				# for debugging
-					except Exception as e:
-						warnings.warn(IGNORE_FIELD_MSG.format(error=e, key=key))
-						continue
-				else: # Treat all other validation types
-					try:
-						parsed_value = _parse_prop(key, prop)
-						dump_to.update({key:parsed_value})
-						self.__field_validation__.update({key:prop[PROP_STRING_VALIDATION]})
-					except Exception as e:
-						warnings.warn(IGNORE_FIELD_MSG.format(error=e, key=key))
-						continue
-					_register_localizable(key, prop)
-					for affix_type in AFFIX_TYPES:
-						try:
-							_register_affixable(key, prop, affix_type)
-						except Exception as e:
-							warnings.warn(IGNORE_FIELD_MSG.format(error=e, key=key+'.'+affix_type))
-							continue
-					_assess_for_delete(key, prop)
-
-			return dump_to
-		return _dump_to_dict(_load_yaml(entry_file))
-	def _resolve_yaml_path(self, filename: str) -> str:
-		for root, _, files in os.walk(self.CONFIGS_FOLDER):
-			if filename in files:
-				return os.path.normpath(os.path.join(root, filename))
-		raise FileNotFoundError(f"YAML file '{filename}' not found in '{self.CONFIGS_FOLDER}' or its subdirectories.")
-
-	def _apply_localization(self):
-		for key, loc in self.__localization__.items():
-			if key in self.__affix__.keys(): self.__affix__[key] = loc[self.language]
-			else: self.__params__[key] = loc[self.language]
-	def _apply_affixes(self):
-		for field, value in self.__affix__.items():
-			key, affix = unpack_affix_key(field)
-			if affix == PROP_STRING_SUFFIX: self.__params__.update({key: self.__params__[key] + value})
-			elif affix == PROP_STRING_PREFIX: self.__params__.update({key: value + self.__params__[key]})
-			else: raise ValueError(f"Unknown affix type for key {key}")
-	def __init__(self, *, yaml_file: str=None, yaml_list: list=None, master=None, language: str = LOCALIZATION_ENGLISH, configs_folder: str='plotstyle_configs', base_folder: str='', keep_all_fields: bool = KEEP_DEFAULT_CLASS_LEVEL):
-		if not VALIDATORS[PROP_STRING_VALIDATION_PATHSTR].validate(configs_folder): 
-			raise TypeError("configs_folder is an invalid folder name.")
-		self.CONFIGS_FOLDER = configs_folder
-		if not VALIDATORS[PROP_STRING_VALIDATION_PATHSTR].validate(base_folder): 
-			raise ValueError("base_folder is an invalid folder name.")
-		self.BASE_FOLDER = base_folder
-		self.language = language
-		self.__field_validation__ = {}
-		self.__localization__ = {}
-		self.__affix__ = {}
-		self.__referenced_fields__ = []
-		self.__marked_for_delete__ = []
-		# Reporting variables for debugging purposes
-		self.__file_stack__ = []
-
-
+		if isinstance(ax, (list, np.ndarray)): ax = ax[0]
+		set_title = lambda: ax.set_title(**set_title_options) if set_title_options else lambda: None
+		if save_with_title: set_title()
+		if savefig: fig.savefig(**savefig_options)
+		if not save_with_title: set_title()
+	@staticmethod
+	def _input_validate(yaml_dict: dict, yaml_file: str, yaml_list: list, master, language: str, configs_folder: str, base_folder: str, keep_all_fields: bool, ctx: _ParseContext):
+		if not VALIDATORS[PROP_STRING_VALIDATION_PATHSTR].validate(configs_folder): raise TypeError("configs_folder is an invalid folder name.")
+		if bool(base_folder) and not VALIDATORS[PROP_STRING_VALIDATION_PATHSTR].validate(base_folder): raise ValueError("base_folder is an invalid folder name.")
+		if yaml_dict is not None:
+			if not isinstance(yaml_dict, dict): raise TypeError("yaml_dict must be a dict.")
+			return
 		if yaml_file is not None:
-			self.__file_stack__.append(yaml_file) 
-			yaml_file = self._resolve_yaml_path(yaml_file) if not os.path.isabs(yaml_file) else yaml_file
-			if not VALIDATORS[PROP_STRING_VALIDATION_YAML].validate(yaml_file):
-				raise ValueError(f"Invalid YAML file: {yaml_file}")
-			
-			self.__params__ = self._yaml_parse(yaml_file)
-
+			yaml_file = _resolve_yaml_path(yaml_file, configs_folder)
+			if not VALIDATORS[PROP_STRING_VALIDATION_YAML].validate(yaml_file): raise ValueError(f"Invalid YAML file: {yaml_file}")
+		if ctx is not None and not isinstance(ctx,_ParseContext): raise ValueError(f"Invalid context: {ctx}")
 		# elif yaml_list is not None:
 		# elif master is not None and isinstance(master, PlotStyle):
 
-		self._apply_localization()
-		self._apply_affixes()
+
+
+	def _delete_marked_fields(self, ctx: _ParseContext):
+		for key in ctx.marked_for_delete: self.__params__.pop(key, None)
+	def __init__(self, *, yaml_dict: dict=None, yaml_file: str=None, yaml_list: list=None, master=None,
+			language: str = PSIF.PropKeys.LANGUAGE_OPTIONS.DEFAULT, 
+			configs_folder: str=PSIF.DEFAULT_CONFIGS_FOLDER, 
+			base_folder: str=None, 
+			keep_all_fields: bool = PSIF.PropSchema.default_keep(),
+			ctx: _ParseContext=_ParseContext(),
+		):
+		PlotStyle._input_validate(yaml_dict=yaml_dict, yaml_file=yaml_file, yaml_list=yaml_list, master=master, language=language, configs_folder=configs_folder, base_folder=base_folder, keep_all_fields=keep_all_fields, ctx=ctx)
+
+		if yaml_dict is not None:
+			yaml_dict = dict(yaml_dict)
+			self.__params__ = _yaml_parse_from_dict(handle = yaml_dict, ctx=ctx, configs_folder=configs_folder)
+		elif yaml_file is not None:
+			ctx.file_stack.append(yaml_file)
+			yaml_file = _resolve_yaml_path(yaml_file, configs_folder) if not os.path.isabs(yaml_file) else yaml_file
+			self.__params__ = _yaml_parse_single_file(entry_file=yaml_file, ctx=ctx, configs_folder=configs_folder)
+		# elif yaml_list is not None:
+		# elif master is not None and isinstance(master, PlotStyle):
+
+		_resolve_marked_for_delete(ctx)
+
+		self.__params__, ctx.affix = PSIF.apply_localization(params_dict=self.__params__, affix_dict=ctx.affix, language=language)
+		self.__params__ = PSIF.apply_affixes(params_dict=self.__params__, affix_dict=ctx.affix)
 		if not keep_all_fields: self._delete_marked_fields()
 		# Load attributes from yaml file onto the object
-		for key, value in self.__params__.items():
-			setattr(self, key, value)
-
-
-
-if __name__ == "__main__":
-	EXAMPLE_CONFIGS_FOLDER = 'example_plotstyle_configs'
-	EXAMPLE_BASE_FOLDER = 'figs'
-	def generate_yaml_files():
-		os.makedirs(os.path.join(EXAMPLE_CONFIGS_FOLDER, EXAMPLE_BASE_FOLDER), exist_ok=True)
-		layout_filename = ROLE_LAYOUT + '.yaml'
-		layout_path = os.path.join(EXAMPLE_CONFIGS_FOLDER, layout_filename)
-		if not os.path.exists(layout_path):
-			with open(layout_path, 'w') as f:
-				yaml.dump({
-					'single_figsize': {
-						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_FIGSIZE,
-						PROP_STRING_SOURCE:PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: '(3.6, 2.7)'
-						},
-				}, f, default_flow_style=False)
-		template_filename = ROLE_TEMPLATE + '.yaml'
-		template_path = os.path.join(EXAMPLE_CONFIGS_FOLDER, template_filename)
-		if not os.path.exists(template_path):
-			with open(template_path, 'w') as f:
-				yaml.dump({
-					ROLE_LAYOUT: {
-						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_YAML,
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: layout_filename
-						},
-					'label_fontsize': {
-						PROP_STRING_VALIDATION: 'fontsize',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: 10
-						},
-					'title_fontsize': {
-						PROP_STRING_VALIDATION: 'fontsize',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: 12
-						}
-				}, f, default_flow_style=False)
-		base_filename = ROLE_BASE + '.yaml'
-		base_path = os.path.join(EXAMPLE_CONFIGS_FOLDER, base_filename)
-		if not os.path.exists(base_path):
-			with open(base_path, 'w') as f:
-				yaml.dump({
-					ROLE_TEMPLATE: {
-						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_YAML,
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: template_filename
-						},
-					'savefig_bbox_inches': {
-						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: 'tight'
-						},
-					'file_format': {
-						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: 'pdf'
-						}
-				}, f, default_flow_style=False)
-
-		plot1_path = os.path.join(EXAMPLE_CONFIGS_FOLDER, EXAMPLE_BASE_FOLDER, 'plot1.yaml')
-		if not os.path.exists(plot1_path):
-			with open(plot1_path, 'w') as f:
-				yaml.dump({
-					ROLE_BASE: {
-						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_YAML,
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: base_filename
-						},
-					'line_label': {
-						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: 'Foo'
-						},
-					'ylabel': {
-						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: 'My Y Axis Label'
-						},
-					'title': {
-						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: 'This uses PS1'
-						},
-					'figsize': {
-						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_FIGSIZE,
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_FIELD,
-						PROP_STRING_VALUE: 'single_figsize'
-						},
-					'xlabel':{
-						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_STR,
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_LOCALIZABLE: True,
-						PROP_STRING_VALUE: {
-							LOCALIZATION_ENGLISH: 'My X Axis Label',
-							LOCALIZATION_PROTUGUESE: 'Meu Label Eixo X',
-						},
-						PROP_STRING_SUFFIX: {
-							PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_STR,
-							PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-							PROP_STRING_VALUE: '[unlocalized suffix]'
-						},
-						PROP_STRING_PREFIX: {
-							PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_STR,
-							PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-							PROP_STRING_LOCALIZABLE: True,
-							PROP_STRING_VALUE: {
-								LOCALIZATION_ENGLISH: '[localized prefix]',
-								LOCALIZATION_PROTUGUESE: '[prefixo localizado]'
-								},
-							}
-						}
-				}, f, default_flow_style=False)
-		plot2_path = os.path.join(EXAMPLE_CONFIGS_FOLDER, EXAMPLE_BASE_FOLDER, 'plot2.yaml')
-		if not os.path.exists(plot2_path):
-			with open(plot2_path, 'w') as f:
-				yaml.dump({
-					ROLE_BASE: {
-						PROP_STRING_VALIDATION: PROP_STRING_VALIDATION_YAML,
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: base_filename
-						},
-					'line_label': {
-						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: 'Foobar'
-						},
-					'xlabel': {
-						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: 'My X Axis Label'
-						},
-					'title': {
-						PROP_STRING_VALIDATION: 'str',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: 'This uses PS2'
-						},
-					'figsize': {
-						PROP_STRING_VALIDATION: 'figsize',
-						PROP_STRING_SOURCE: PROP_STRING_SOURCE_VALUE_FROM_LITERAL,
-						PROP_STRING_VALUE: "lambda n: (6, 2.5 * n)"
-						}
-				}, f, default_flow_style=False)
-	generate_yaml_files()
-
-	# using chain-referencing
-	PS1 = PlotStyle(yaml_file='plot1.yaml', configs_folder=EXAMPLE_CONFIGS_FOLDER, base_folder=EXAMPLE_BASE_FOLDER, language=LOCALIZATION_ENGLISH)
-	# PS2 = PlotStyle(yaml_file='plot2.yaml', configs_folder=EXAMPLE_CONFIGS_FOLDER, base_folder=EXAMPLE_BASE_FOLDER)
-	def plot1(ps: PlotStyle=PS1):
-		fig, ax = plt.subplots(N:=1,figsize=ps.figsize)			# Use with PS1
-		# fig, ax = plt.subplots(N:=1,figsize=ps.figsize(1))		# Use with PS2
-		ax.plot([0, 1], [0, 1], label=ps.line_label)
-		ax.set_title(ps.title, fontsize=ps.title_fontsize)
-		ax.set_ylabel(ps.ylabel)
-		ax.set_xlabel(ps.xlabel)
-		ax.legend()
-		plt.show()
-	plot1(ps=PS1)
+		for key, value in self.__params__.items(): setattr(self, key, value)

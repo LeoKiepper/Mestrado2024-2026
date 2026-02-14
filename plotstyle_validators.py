@@ -8,6 +8,7 @@ from matplotlib.figure import Figure
 from matplotlib.font_manager import FontProperties, findfont
 import matplotlib.colors as mcolors
 import ast
+UNKNOWN_VALIDATOR_MSG = "Unknown validator"
 
 
 class NotLambdaFigsize(Exception):
@@ -31,9 +32,6 @@ class Validator(ABC):
 	def parse(self, value: Any, owner: Any = None, **context) -> Any: ...
 	@abstractmethod
 	def sanitize(self, value: Any, **context) -> Any: ...
-	@property
-	def is_composite(self) -> bool:
-		return False
 def register_validator(name: str):
 	def decorator(cls: type[Validator]):
 		VALIDATORS[name] = cls()
@@ -79,12 +77,12 @@ class PathstrValidator(Validator):
 PROP_STRING_VALIDATION_FILENAME = "filename"
 @register_validator(PROP_STRING_VALIDATION_FILENAME)
 class FilenameValidator(Validator):
-	def validate(self, value: Any) -> bool:
+	def validate(self, value, **context) -> bool:
 		return VALIDATORS[PROP_STRING_VALIDATION_PATHSTR].validate(value)
-	def parse(self, value: Any) -> str:
+	def parse(self, value, **context) -> str:
 		if not self.validate(value): raise ValueError(f"Not a valid filename: {value}")
 		return value
-	def sanitize(self, value) -> str:
+	def sanitize(self, value, **context) -> str:
 		if not self.validate(value): return ''
 		else: return value
 #endregion
@@ -162,7 +160,68 @@ class ColorValidator(Validator):
 		if not self.validate(value): return None
 		else: return value
 #endregion
+#region float validator
+PROP_STRING_VALIDATION_FLOAT = "float"
 
+@register_validator(PROP_STRING_VALIDATION_FLOAT)
+class FloatValidator(Validator):
+	def validate(self, value: Any, **context) -> bool:
+		if isinstance(value, bool):
+			return False
+		try:
+			float(value)
+			return True
+		except (TypeError, ValueError):
+			return False
+
+	def parse(self, value: Any, **context):
+		if not self.validate(value):
+			raise ValueError(f"Expected real-valued numeric, got {type(value).__name__}")
+		return float(value)
+
+	def sanitize(self, value: Any, **context):
+		if not self.validate(value):
+			return 0.0
+		return float(value)
+#endregion
+#region int validator
+PROP_STRING_VALIDATION_INT = "int"
+
+@register_validator(PROP_STRING_VALIDATION_INT)
+class FloatValidator(Validator):
+	def validate(self, value: Any, **context) -> bool:
+		if isinstance(value, bool):
+			return False
+		try:
+			int(value)
+			return True
+		except (TypeError, ValueError):
+			return False
+
+	def parse(self, value: Any, **context):
+		if not self.validate(value):
+			raise ValueError(f"Expected real-valued numeric, got {type(value).__name__}")
+		return int(value)
+
+	def sanitize(self, value: Any, **context):
+		if not self.validate(value):
+			return 0
+		return int(value)
+#endregion
+#region undetermined validator
+PROP_STRING_VALIDATION_UNDETERMINED = "undetermined"
+@register_validator(PROP_STRING_VALIDATION_UNDETERMINED)
+class UndeterminedValidator(Validator):
+    def validate(self, value, **context) -> bool:
+        return True
+    def parse(self, value, **context):
+        # identity parse — but respect composite parsing via field_parser if given
+        # if a composite value (dict/list) includes nested field dicts, the caller will
+        # have to have used the field_parser context to resolve them; here we just return
+        return value
+    def sanitize(self, value, **context):
+        return value
+#endregion
 #region fontfamily validator
 PROP_STRING_VALIDATION_FONTFAMILY = "fontfamily"
 @register_validator(PROP_STRING_VALIDATION_FONTFAMILY)
@@ -181,7 +240,6 @@ class FontfamilyValidator(Validator):
 		if not self.validate(value): return None
 		else: return value
 #endregion
-
 #region fontsize validator
 PROP_STRING_VALIDATION_FONTSIZE = "fontsize"
 @register_validator(PROP_STRING_VALIDATION_FONTSIZE)
@@ -204,7 +262,7 @@ PROP_STRING_VALIDATION_LINEWIDTH = "linewidth"
 @register_validator(PROP_STRING_VALIDATION_LINEWIDTH)
 class LinewidthValidator(Validator):
 	def validate(self, value: Any, **context) -> bool:
-		if isinstance(value, (int, float)): return value > 0
+		if isinstance(value, (int, float)): return value >= 0
 		return value == None
 	def parse(self, value: Any, **context) -> str:
 		if not self.validate(value): raise ValueError(f"Not a valid linewidth: {value}")
@@ -213,6 +271,42 @@ class LinewidthValidator(Validator):
 		if not self.validate(value): return None
 		else: return value
 #endregion
+
+#region dict validator
+PROP_STRING_VALIDATION_DICT = "dict"
+@register_validator(PROP_STRING_VALIDATION_DICT)
+class DictValidator(Validator):
+	def validate(self, value: Any, **context) -> bool:
+		if not isinstance(value, dict): return False
+		field_parser = context.get(CONTEXT_FIELD_PARSER_FUNC)
+		if not callable(field_parser): return False
+		try:
+			for key, subprop in value.items():
+				if not isinstance(key, str): return False
+				# field_parser expects a mapping {key: subprop} and will raise on failure
+				_ = field_parser({key: subprop})
+		except Exception: return False
+		return True
+
+	def parse(self, value: dict, **context) -> dict:
+		if not self.validate(value, **context): raise ValueError("Invalid dict structure for 'dict' validator")
+		field_parser = context.get(CONTEXT_FIELD_PARSER_FUNC)
+		if not callable(field_parser): raise ValueError("Missing field_parser context for dict parsing")
+		parsed = {}
+		for key, subprop in value.items():
+			sub_parsed = field_parser({key: subprop})
+			# field_parser returns a mapping; extract the parsed value for this key
+			parsed[key] = sub_parsed[key]
+		return parsed
+
+	def sanitize(self, value: Any, **context) -> dict:
+		if not isinstance(value, dict): return {}
+		field_parser = context.get(CONTEXT_FIELD_PARSER_FUNC)
+		if not callable(field_parser): return {}
+		try: return self.parse(value, **context)
+		except Exception: return {}
+#endregion
+
 
 #region figsize validator
 PROP_STRING_VALIDATION_FIGSIZE = "figsize"
@@ -317,10 +411,39 @@ class GridoptionsValidator(Validator):
 		for item in value:
 			parsed_dict = {}
 			for subkey, subprop in item.items():
-				parsed_dict.update({subkey: field_parser({subkey: subprop})})
+				parsed = field_parser({subkey: subprop})
+				parsed_dict[subkey] = parsed[subkey]
 			parsed_list.append(parsed_dict)
 		return parsed_list
 	def sanitize(self, value, **context) -> list:
 		if not self.validate(value, **context): return []
 		return value
+#endregion
+#region plotstyle validator
+PROP_STRING_VALIDATION_PLOTOPTIONS = "plotoptions"
+@register_validator(PROP_STRING_VALIDATION_PLOTOPTIONS)
+class PlotoptionsValidator(Validator):
+	def validate(self, value: Any, **context) -> bool:
+		if not isinstance(value, dict):
+			return False
+		field_parser = context.get(CONTEXT_FIELD_PARSER_FUNC)
+		if not callable(field_parser):
+			return False
+		try:
+			field_parser(value)
+			return True
+		except Exception:
+			return False
+	def parse(self, value: dict, **context) -> dict:
+		field_parser = context.get(CONTEXT_FIELD_PARSER_FUNC)
+		if not callable(field_parser):
+			raise ValueError("plotstyle requires field_parser context")
+		parsed = field_parser(value)
+		if not isinstance(parsed, dict):
+			raise ValueError("plotstyle did not produce a dict")
+		return parsed
+	def sanitize(self, value: Any, **context) -> dict:
+		if not self.validate(value, **context):
+			return {}
+		return self.parse(value, **context)
 #endregion
