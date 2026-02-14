@@ -1,0 +1,77 @@
+configs:
+  - save_folder: Figures\IEEE-TIM-2026
+    yaml: ["layout_two-column.yaml","template_IEEE2025-2.yaml","base_IEEE-TIM-2026-2.yaml"]
+    language: en
+  - save_folder: Figures\Dissertação
+    yaml: ["layout_one-column.yaml","template_IEEE2025.yaml","base_IEEE-TIM-2026.yaml"]
+    language: pt
+save:
+  validation: bool
+  source: literal
+  value: True
+save_with_title:
+  validation: bool
+  source: literal
+  value: False
+title_prefix:
+  validation: str
+  localizable: True
+  source: literal
+  value:
+    en: 'Monte Carlo Simulation'
+    pt: 'Simulação Monte Carlo'
+filename_prefix:
+  validation: filename
+  source: literal
+  value: 'MC_'
+
+
+y_limits: [45,75]
+
+
+envelope_linewidth:
+  validation: float
+  source: literal
+  value: 0
+region_alpha:
+  validation: float
+  source: field
+  value: region_alpha_medium
+prediction_plot_options:
+  validation: plotoptions
+  source: literal
+  value:
+    label:
+      validation: str
+      localizable: True
+      source: literal
+      value:
+        en: 'Prediction'
+        pt: 'Predição'
+    linewidth:
+      validation: linewidth
+      source: field
+      value: linewidth_thin
+    color:
+      validation: color
+      source: literal
+      value: C1
+reference_plot_options:
+  validation: plotoptions
+  source: literal
+  value:
+    label:
+      validation: str
+      localizable: True
+      source: literal
+      value:
+        en: 'Reference'
+        pt: 'Referência'
+    linewidth:
+      validation: linewidth
+      source: field
+      value: linewidth_extrathin
+    color:
+      validation: color
+      source: literal
+      value: C0

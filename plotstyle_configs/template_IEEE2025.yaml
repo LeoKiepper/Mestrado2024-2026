@@ -1,20 +1,15 @@
-layout:
-  validation: yaml
-  source: constant
-  value: "layout_two-column.yaml" 
-
 # FONT SPEC
 fontfamily:
   validation: fontfamily
-  source: constant
+  source: literal
   value: 'Times New Roman'
 fontsize:
   validation: fontsize
-  source: constant
+  source: literal
   value: 12
 
 # FILE SPEC
 file_format:
   validation: fileformat
-  source: constant
+  source: literal
   value: 'pdf'

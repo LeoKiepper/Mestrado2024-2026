@@ -1,0 +1,163 @@
+save_with_title:
+  validation: bool
+  source: literal
+  value: False
+
+  
+# LABEL SUFFIXES
+time_unit_annotation:
+  validation: str
+  keep: False
+  source: literal
+  value: ' $[s]$'
+temperature_unit_annotation:
+  validation: str
+  keep: False
+  source: literal
+  value: ' $[° C]$'
+percent_unit_annotation:
+  validation: str
+  keep: False
+  source: literal
+  value: ' $[\%]$'
+
+# LABELS
+xlabel_timeseries:
+  validation: str
+  localizable: True
+  keep: True
+  source: literal
+  value:
+    en: 'Time'
+    pt: 'Tempo'
+  suffix:
+    validation: str
+    source: field
+    value: "time_unit_annotation"
+ylabel_temperature:
+  validation: str
+  localizable: True
+  source: literal
+  value:
+    en: 'Temperature'
+    pt: 'Temperatura'
+  suffix:
+    validation: str
+    source: field
+    value: "temperature_unit_annotation"
+ylabel_temperaturediff:
+  validation: str
+  localizable: True
+  source: literal
+  value:
+    en: 'Temperature difference'
+    pt: 'Diferença de temperatura'
+  suffix:
+    validation: str
+    source: field
+    value: "temperature_unit_annotation"
+ylabel_cpuload:
+  validation: str
+  localizable: True
+  source: literal
+  value:
+    en: 'CPU load'
+    pt: 'Utilização da CPU'
+  suffix:
+    validation: str
+    source: field
+    value: "percent_unit_annotation"
+
+# GRID OPTIONS
+grid_options:
+  validation: gridoptions
+  source: literal
+  value:
+    - which: 
+        validation: str
+        source: literal
+        value: major
+      color:
+        validation: color
+        source: literal
+        value: "#e0e0e0"
+      linewidth:
+        validation: linewidth
+        source: literal
+        value:  0.6
+    - which: 
+        validation: str
+        source: literal
+        value: minor
+      color:
+        validation: color
+        source: literal
+        value: "#f0f0f0"
+      linewidth:
+        validation: linewidth
+        source: literal
+        value:  0.3
+      linestyle:
+        validation: str
+        source: literal
+        value: "--"
+
+# SHARED PLOT OPTIONS
+prediction_plot_options:
+  validation: plotoptions
+  source: literal
+  value:
+    label:
+      validation: str
+      localizable: True
+      source: literal
+      value:
+        en: 'Prediction'
+        pt: 'Predição'
+    linewidth:
+      validation: linewidth
+      source: field
+      value: linewidth_medium
+    color:
+      validation: color
+      source: literal
+      value: C1
+reference_plot_options:
+  validation: plotoptions
+  source: literal
+  value:
+    label:
+      validation: str
+      localizable: True
+      source: literal
+      value:
+        en: 'Reference'
+        pt: 'Referência'
+    linewidth:
+      validation: linewidth
+      source: field
+      value: linewidth_thin
+    color:
+      validation: color
+      source: literal
+      value: C0
+plotarea_facecolor:
+  validation: color
+  source: literal
+  value: '#fbfbfb'
+region_saturation:
+  validation: float
+  source: literal
+  value: 0.7
+region_alpha_low:
+  validation: float
+  source: literal
+  value: 0.25
+region_alpha_medium:
+  validation: float
+  source: literal
+  value: 0.45
+region_alpha_high:
+  validation: float
+  source: literal
+  value: 0.65

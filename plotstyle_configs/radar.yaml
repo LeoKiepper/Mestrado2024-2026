@@ -1,0 +1,155 @@
+configs:
+  - save_folder: Figures\IEEE-TIM-2026
+    language: en
+  - save_folder: Figures\Dissertação
+    language: pt
+yaml: 
+  validation: yaml
+  source: literal
+  value: ["layout_two-column.yaml","template_IEEE2025.yaml","base_IEEE-TIM-2026.yaml"]
+save:
+  validation: bool
+  source: literal
+  value: True
+title:
+  validation: str
+  localizable: True
+  source: literal
+  value:
+    en: 'KPI comparison radar chart'
+    pt: 'Gráfico radar de comparação de KPIs'
+title_padding:
+  validation: float
+  source: literal
+  value: 20
+filename:
+  validation: filename
+  source: literal
+  value: 'KPI_comparison_radar_plot'
+filename_prefix:
+  validation: filename
+  source: literal
+  value: 'KPI_radar_plot'
+
+# SCRIPT CONTROL PARAMETERS
+queries:
+  - "Output"
+  - "MEM max"
+  # - "MEM avg"
+  # - "CPU total: max"
+  - "CPU total: avg"
+  - "Elapsed"
+bases_for_logscale_transformation:
+  Output: 2
+  MEM max: 2
+  # MEM avg: 2
+  # 'CPU total: max': 2
+  'CPU total: avg': 5
+  Elapsed: 10
+normalizing_values:
+  Output: 2
+  MEM max: 4
+  # MEM avg: 1
+  # 'CPU total: max': 50
+  'CPU total: avg': 20
+  Elapsed: 1000
+# query_axis_label_mapping:
+#   Output: 'Accuracy'
+#   MEM max: 'MEM max'
+#   # MEM avg: 'MEM avg'
+#   # 'CPU total: max': 'CPU max'
+#   'CPU total: avg': 'CPU avg'
+#   Elapsed: 'Script time'
+query_axis_label_mapping:
+  Output: 'A'
+  MEM max: 'B'
+  # MEM avg: 'B'
+  # 'CPU total: max': 'C'
+  'CPU total: avg': 'C'
+  Elapsed: 'D [min]'
+
+name_legend_mapping:
+  Comparison_LSTM: 'LSTM'
+  Comparison_RNN: 'RNN'
+  DDSEspeleo: 'Proposed'
+axis_scale_margin_gamma:
+  validation: float
+  source: literal
+  value: 0.05
+min_tick_label_radius:  # Minimum distance from center where a tick must land for it's label to be drawn
+  validation: float
+  source: literal
+  value: 0.15
+
+
+
+# PLOT STYLE PARAMETERS
+figsize:
+  validation: figsize
+  source: field
+  value: figsize_single_square_tiny
+radial_grid_levels: # How many concentric circles to draw
+  validation: int
+  source: literal
+  value: 3
+axis_label_direction: # What direction to draw axis labels
+  validation: str
+  source: literal
+  # value: 'upright'
+  value: 'radial'
+upside_down_text_threshold_angle_from_horizontal:
+  validation: float
+  source: literal
+  value: 75 # Degrees
+main_axis:            # Pick one axis to set a direction
+  validation: str
+  source: literal
+  value: 'Output' # Must be one of queries or None
+main_axis_direction:  # Angle at which to draw main_axis
+  validation: float
+  source: literal
+  value: 90 # Degrees, canonical coord system
+axis_sequence:
+  validation: str
+  source: literal
+  value: cw   # cw or ccw
+axis_label_offset:  # radial magnitude to apply to xytext, textcoords='offset_points', when drawing axis labels
+  validation: float
+  source: literal
+  value: 7  # Points
+region_alpha:
+  validation: float
+  source: field
+  value: region_alpha_low
+line_color:
+  validation: color
+  source: literal
+  value: 'C0'
+linewidth:
+  validation: linewidth
+  source: field
+  value: linewidth_thick
+grid_color:
+  validation: color
+  source: literal
+  value: [0.8, 0.8, 0.8, 0.3]
+label_color:
+  validation: color
+  source: literal
+  keep: True
+  value: [0.4,0.4,0.4]
+grid_options:
+  validation: gridoptions
+  source: literal
+  value:
+    - color:
+        validation: color
+        source: field
+        value: grid_color
+      linewidth:
+        validation: linewidth
+        source: field
+        value:  linewidth_extrathin
+
+tick_label_fontsize: 5
+axis_label_fontsize: 7

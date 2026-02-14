@@ -4,12 +4,12 @@ figsize_single:
   validation: figsize
   source: literal
   keep: True
-  value: (3.6,2.7) 
+  value: (6.4,4.8) 
 figsize_single_wide:
   validation: figsize
-  source: field
+  source: literal
   keep: True
-  value: figsize_single
+  value: (6.4,2.4) 
 figsize_single_square:
   validation: figsize
   source: literal
