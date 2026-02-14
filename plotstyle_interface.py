@@ -14,8 +14,8 @@ DEFAULT_CONFIGS_FOLDER = 'plotstyle_configs'
 class InvalidSourceType(Exception): pass
 class SourceFieldMissing(Exception): pass
 class FieldIntent(Enum):
-	BARE = 'bare'
-	CANONICAL = 'canonical'
+	IMPLICIT = 'implicit'
+	EXPLICIT = 'explicit'
 class PropKeys:
 	VALUE = "value"
 	VALIDATION = "validation"
@@ -41,32 +41,31 @@ class PropKeys:
 class PropSchema:
 	@dataclass
 	class TAGS:
-		BARE = "bare"
-		CANONICAL = "canonical"
+		IMPLICIT = FieldIntent.IMPLICIT
+		EXPLICIT = FieldIntent.EXPLICIT
 	TAG_TO_INTENT = {
-		f"!{TAGS.BARE}": FieldIntent.BARE,
-		f"!{TAGS.CANONICAL}": FieldIntent.CANONICAL,
+		f"!{TAGS.IMPLICIT}": FieldIntent.IMPLICIT,
+		f"!{TAGS.EXPLICIT}": FieldIntent.EXPLICIT,
 	}
 	INTENT_DEFAULTS = {
-		FieldIntent.BARE: {
+		FieldIntent.IMPLICIT: {
 			PropKeys.VALIDATION: PROP_STRING_VALIDATION_UNDETERMINED,
 			PropKeys.SOURCE: PropKeys.SOURCE_OPTIONS.VALUE_FROM_LITERAL,
 		},
-		FieldIntent.CANONICAL: {
+		FieldIntent.EXPLICIT: {
 			PropKeys.VALIDATION: PROP_STRING_VALIDATION_UNDETERMINED,
 			PropKeys.SOURCE: PropKeys.SOURCE_OPTIONS.VALUE_FROM_LITERAL,
 		},
 	}
 
 	
-	REQUIRED_CANONICAL_KEYS = {
+	REQUIRED_EXPLICIT_PROPS = {
 		PropKeys.VALUE,
-		PropKeys.VALIDATION,
 		PropKeys.SOURCE,
 	}
 	@classmethod
-	def looks_canonical(cls, mapping: dict) -> bool:
-		return bool(set(mapping).intersection(cls.REQUIRED_CANONICAL_KEYS))
+	def looks_explicit(cls, mapping: dict) -> bool:
+		return bool(set(mapping).intersection(cls.REQUIRED_EXPLICIT_PROPS))
 
 	AFFIX_KEYS = (
 		PropKeys.PREFIX,
@@ -124,10 +123,10 @@ def configure_tags():
 IGNORE_FIELD_MSG = "[INFO]: Error raised when parsing field '{key}'. Field was ignored and will not load onto the object.\n\t{error}."
 PARSE_ERROR_MSG = "Failed to parse key '{key}' with validator '{validator}': {error}"
 def normalize_prop(key: str, raw_prop: Any) -> dict:
-	def _as_bare(value: Any) -> dict:
+	def _as_implicit(value: Any) -> dict:
 		return {
 			PropKeys.VALUE: value,
-			**PropSchema.INTENT_DEFAULTS[FieldIntent.BARE],
+			**PropSchema.INTENT_DEFAULTS[FieldIntent.IMPLICIT],
 		}
 
 	# --- Tagged nodes: follow explicit intent ---
@@ -135,14 +134,14 @@ def normalize_prop(key: str, raw_prop: Any) -> dict:
 		intent = raw_prop.intent
 		value = raw_prop.value
 
-		if intent is FieldIntent.BARE:
-			return _as_bare(value)
+		if intent is FieldIntent.IMPLICIT:
+			return _as_implicit(value)
 
-		if intent is FieldIntent.CANONICAL:
+		if intent is FieldIntent.EXPLICIT:
 			if not isinstance(value, dict) or PropKeys.VALUE not in value:
-				raise ValueError(f"Field '{key}' tagged {PropSchema.TAGS.CANONICAL} but missing payload key '{PropKeys.VALUE}'")
+				raise ValueError(f"Field '{key}' tagged {PropSchema.TAGS.EXPLICIT} but missing payload key '{PropKeys.VALUE}'")
 			prop = value.copy()
-			for k, v in PropSchema.INTENT_DEFAULTS[FieldIntent.CANONICAL].items():
+			for k, v in PropSchema.INTENT_DEFAULTS[FieldIntent.EXPLICIT].items():
 				prop.setdefault(k, v)
 			return prop
 
@@ -157,17 +156,17 @@ def normalize_prop(key: str, raw_prop: Any) -> dict:
 			prop.setdefault(PropKeys.SOURCE, PropKeys.SOURCE_OPTIONS.VALUE_FROM_LITERAL)
 			return prop
 
-		# bare dict (but warn if it contains canonical-like keys)
-		suspicious = set(raw_prop.keys()).intersection(PropSchema.REQUIRED_CANONICAL_KEYS)
-		if PropSchema.looks_canonical(raw_prop):			warnings.warn(
+		# implicit dict (but warn if it contains canonical-like keys)
+		suspicious = set(raw_prop.keys()).intersection(PropSchema.REQUIRED_EXPLICIT_PROPS)
+		if PropSchema.looks_explicit(raw_prop):			warnings.warn(
 				f"Field '{key}' contains keys {sorted(suspicious)} but no "
-				f"'{PropKeys.VALUE}' entry. Interpreted as bare field.",
+				f"'{PropKeys.VALUE}' entry. Interpreted as implicit field.",
 				UserWarning,
 			)
-		return _as_bare(raw_prop)
+		return _as_implicit(raw_prop)
 
-	# non-dict -> bare
-	return _as_bare(raw_prop)
+	# non-dict -> implicit
+	return _as_implicit(raw_prop)
 def fetch_value(key: str, prop: dict, dump_to: dict={}, read_from: dict={}):
 	if PropKeys.SOURCE not in prop.keys(): raise SourceFieldMissing
 	if prop[PropKeys.SOURCE] == PropKeys.SOURCE_OPTIONS.VALUE_FROM_LITERAL:
