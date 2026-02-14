@@ -6,22 +6,22 @@ configs:
     yaml: ["layout_one-column.yaml","template_IEEE2025.yaml","base_IEEE-TIM-2026.yaml"]
     language: pt
 save:
-  validation: bool
+  validator: bool
   source: literal
   value: True
 save_with_title:
-  validation: bool
+  validator: bool
   source: literal
   value: False
 title_prefix:
-  validation: str
+  validator: str
   localizable: True
   source: literal
   value:
     en: 'Monte Carlo Simulation'
     pt: 'Simulação Monte Carlo'
 filename_prefix:
-  validation: filename
+  validator: filename
   source: literal
   value: 'MC_'
 
@@ -30,48 +30,48 @@ y_limits: [45,75]
 
 
 envelope_linewidth:
-  validation: float
+  validator: float
   source: literal
   value: 0
 region_alpha:
-  validation: float
+  validator: float
   source: field
   value: region_alpha_medium
 prediction_plot_options:
-  validation: plotoptions
+  validator: plotoptions
   source: literal
   value:
     label:
-      validation: str
+      validator: str
       localizable: True
       source: literal
       value:
         en: 'Prediction'
         pt: 'Predição'
     linewidth:
-      validation: linewidth
+      validator: linewidth
       source: field
       value: linewidth_thin
     color:
-      validation: color
+      validator: color
       source: literal
       value: C1
 reference_plot_options:
-  validation: plotoptions
+  validator: plotoptions
   source: literal
   value:
     label:
-      validation: str
+      validator: str
       localizable: True
       source: literal
       value:
         en: 'Reference'
         pt: 'Referência'
     linewidth:
-      validation: linewidth
+      validator: linewidth
       source: field
       value: linewidth_extrathin
     color:
-      validation: color
+      validator: color
       source: literal
       value: C0

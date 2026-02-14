@@ -18,7 +18,7 @@ class FieldIntent(Enum):
 	EXPLICIT = 'explicit'
 class PropKeys:
 	VALUE = "value"
-	VALIDATION = "validation"
+	VALIDATOR = "validator"
 	SOURCE = "source"
 	@dataclass
 	class SOURCE_OPTIONS:
@@ -49,11 +49,11 @@ class PropSchema:
 	}
 	INTENT_DEFAULTS = {
 		FieldIntent.IMPLICIT: {
-			PropKeys.VALIDATION: PROP_STRING_VALIDATION_UNDETERMINED,
+			PropKeys.VALIDATOR: PROP_STRING_VALIDATION_UNDETERMINED,
 			PropKeys.SOURCE: PropKeys.SOURCE_OPTIONS.VALUE_FROM_LITERAL,
 		},
 		FieldIntent.EXPLICIT: {
-			PropKeys.VALIDATION: PROP_STRING_VALIDATION_UNDETERMINED,
+			PropKeys.VALIDATOR: PROP_STRING_VALIDATION_UNDETERMINED,
 			PropKeys.SOURCE: PropKeys.SOURCE_OPTIONS.VALUE_FROM_LITERAL,
 		},
 	}
@@ -152,7 +152,7 @@ def normalize_prop(key: str, raw_prop: Any) -> dict:
 		# canonical when payload key present
 		if PropKeys.VALUE in raw_prop:
 			prop = raw_prop.copy()
-			prop.setdefault(PropKeys.VALIDATION, PROP_STRING_VALIDATION_UNDETERMINED)
+			prop.setdefault(PropKeys.VALIDATOR, PROP_STRING_VALIDATION_UNDETERMINED)
 			prop.setdefault(PropKeys.SOURCE, PropKeys.SOURCE_OPTIONS.VALUE_FROM_LITERAL)
 			return prop
 
@@ -177,14 +177,14 @@ def fetch_value(key: str, prop: dict, dump_to: dict={}, read_from: dict={}):
 		raise InvalidSourceType
 def parse_prop(key: str, prop: dict, dumper: callable, dump_to: dict, read_from: dict):
 	try:
-		validator = VALIDATORS.get(prop[PropKeys.VALIDATION])
+		validator = VALIDATORS.get(prop[PropKeys.VALIDATOR])
 		if not validator:
-			raise UnkownValidator(UNKNOWN_VALIDATOR_MSG.format(validator=prop[PropKeys.VALIDATION], key=key))
+			raise UnkownValidator(UNKNOWN_VALIDATOR_MSG.format(validator=prop[PropKeys.VALIDATOR], key=key))
 		return validator.parse(fetch_value(key, prop, dump_to, read_from)[1], **{
 			CONTEXT_FIELD_PARSER_FUNC: lambda nested_handle: dumper(nested_handle, dump_to={}, read_from=dump_to)
 		})
 	except Exception as e:
-		raise ParseError(PARSE_ERROR_MSG.format(key=key, validator=prop[PropKeys.VALIDATION], error=e))
+		raise ParseError(PARSE_ERROR_MSG.format(key=key, validator=prop[PropKeys.VALIDATOR], error=e))
 def apply_localization(params_dict: dict, affix_dict: dict, language: str):
 	def resolve(value):
 		if isinstance(value, dict):

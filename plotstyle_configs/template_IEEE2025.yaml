@@ -1,15 +1,15 @@
 # FONT SPEC
 fontfamily:
-  validation: fontfamily
+  validator: fontfamily
   source: literal
   value: 'Times New Roman'
 fontsize:
-  validation: fontsize
+  validator: fontsize
   source: literal
   value: 12
 
 # FILE SPEC
 file_format:
-  validation: fileformat
+  validator: fileformat
   source: literal
   value: 'pdf'

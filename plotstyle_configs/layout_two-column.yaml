@@ -1,27 +1,27 @@
 # FIGSIZES
 # matplotlib default figsize is (6.4,4.8) inches
 figsize_single:
-  validation: figsize
+  validator: figsize
   source: literal
   keep: True
   value: (3.6,2.7) 
 figsize_single_wide:
-  validation: figsize
+  validator: figsize
   source: field
   keep: True
   value: figsize_single
 figsize_single_square:
-  validation: figsize
+  validator: figsize
   source: literal
   keep: True
   value: (3.6,3.6) 
 figsize_single_square_tiny:
-  validation: figsize
+  validator: figsize
   source: literal
   keep: True
   value: (0.8,0.8) 
 figsize_multiple:
-  validation: figsize
+  validator: figsize
   keep: True
   source: literal
   value: "lambda n: (3.6, 2.6 * n)"
@@ -30,32 +30,32 @@ figsize_multiple:
 # Fontsizes are given in pt. 	1 in = 72 pts
 # Default font size for labels and titles is 10
 label_fontsize:
-  validation: fontsize
+  validator: fontsize
   keep: True
   source: literal
   value: 10
 title_fontsize:
-  validation: fontsize
+  validator: fontsize
   keep: True
   source: literal
   value: 12
 annotate_fontsize:
-  validation: fontsize
+  validator: fontsize
   keep: True
   source: literal
   value: 8
 legend_fontsize:
-  validation: fontsize
+  validator: fontsize
   keep: True
   source: literal
   value: 7
 tick_label_fontsize:
-  validation: fontsize
+  validator: fontsize
   keep: True
   source: literal
   value: 6
 axis_label_fontsize:
-  validation: fontsize
+  validator: fontsize
   keep: True
   source: literal
   value: 8
@@ -63,32 +63,32 @@ axis_label_fontsize:
 # LINE WIDTHS
 # Default linewidth for plots is 1.5
 linewidth_extrathin:
-  validation: linewidth
+  validator: linewidth
   keep: True
   source: literal
   value: 0.3
 linewidth_thin:
-  validation: linewidth
+  validator: linewidth
   keep: True
   source: literal
   value: 0.5
 linewidth_medium:
-  validation: linewidth
+  validator: linewidth
   keep: True
   source: literal
   value: 1
 linewidth_thick:
-  validation: linewidth
+  validator: linewidth
   keep: True
   source: literal
   value: 1.5
 linewidth_extrathick:
-  validation: linewidth
+  validator: linewidth
   keep: True
   source: literal
   value: 2
 spine_linewidth:
-  validation: linewidth
+  validator: linewidth
   keep: True
   source: literal
   value: 0.5

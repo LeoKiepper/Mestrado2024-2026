@@ -4,30 +4,30 @@ configs:
   - save_folder: Figures\Dissertação
     language: pt
 yaml: 
-  validation: yaml
+  validator: yaml
   source: literal
   value: ["layout_two-column.yaml","template_IEEE2025.yaml","base_IEEE-TIM-2026.yaml"]
 save:
-  validation: bool
+  validator: bool
   source: literal
   value: True
 title:
-  validation: str
+  validator: str
   localizable: True
   source: literal
   value:
     en: 'KPI comparison radar chart'
     pt: 'Gráfico radar de comparação de KPIs'
 title_padding:
-  validation: float
+  validator: float
   source: literal
   value: 20
 filename:
-  validation: filename
+  validator: filename
   source: literal
   value: 'KPI_comparison_radar_plot'
 filename_prefix:
-  validation: filename
+  validator: filename
   source: literal
   value: 'KPI_radar_plot'
 
@@ -73,11 +73,11 @@ name_legend_mapping:
   Comparison_RNN: 'RNN'
   DDSEspeleo: 'Proposed'
 axis_scale_margin_gamma:
-  validation: float
+  validator: float
   source: literal
   value: 0.05
 min_tick_label_radius:  # Minimum distance from center where a tick must land for it's label to be drawn
-  validation: float
+  validator: float
   source: literal
   value: 0.15
 
@@ -85,69 +85,69 @@ min_tick_label_radius:  # Minimum distance from center where a tick must land fo
 
 # PLOT STYLE PARAMETERS
 figsize:
-  validation: figsize
+  validator: figsize
   source: field
   value: figsize_single_square_tiny
 radial_grid_levels: # How many concentric circles to draw
-  validation: int
+  validator: int
   source: literal
   value: 3
 axis_label_direction: # What direction to draw axis labels
-  validation: str
+  validator: str
   source: literal
   # value: 'upright'
   value: 'radial'
 upside_down_text_threshold_angle_from_horizontal:
-  validation: float
+  validator: float
   source: literal
   value: 75 # Degrees
 main_axis:            # Pick one axis to set a direction
-  validation: str
+  validator: str
   source: literal
   value: 'Output' # Must be one of queries or None
 main_axis_direction:  # Angle at which to draw main_axis
-  validation: float
+  validator: float
   source: literal
   value: 90 # Degrees, canonical coord system
 axis_sequence:
-  validation: str
+  validator: str
   source: literal
   value: cw   # cw or ccw
 axis_label_offset:  # radial magnitude to apply to xytext, textcoords='offset_points', when drawing axis labels
-  validation: float
+  validator: float
   source: literal
   value: 7  # Points
 region_alpha:
-  validation: float
+  validator: float
   source: field
   value: region_alpha_low
 line_color:
-  validation: color
+  validator: color
   source: literal
   value: 'C0'
 linewidth:
-  validation: linewidth
+  validator: linewidth
   source: field
   value: linewidth_thick
 grid_color:
-  validation: color
+  validator: color
   source: literal
   value: [0.8, 0.8, 0.8, 0.3]
 label_color:
-  validation: color
+  validator: color
   source: literal
   keep: True
   value: [0.4,0.4,0.4]
 grid_options:
-  validation: gridoptions
+  validator: gridoptions
   source: literal
   value:
     - color:
-        validation: color
+        validator: color
         source: field
         value: grid_color
       linewidth:
-        validation: linewidth
+        validator: linewidth
         source: field
         value:  linewidth_extrathin
 

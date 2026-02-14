@@ -1,33 +1,33 @@
 base:
-  validation: yaml
+  validator: yaml
   source: literal
   value: "base_ICAR2025-DDSdevelopment.yaml"
 save:
-  validation: bool
+  validator: bool
   source: literal
   value: False
 
 figsize:
-  validation: figsize
+  validator: figsize
   source: field
   value: "figsize_multiple"
 title:
-  validation: str
+  validator: str
   localizable: True
   source: literal
   value:
-    en: 'M3 cross-validation'
+    en: 'M3 cross-validator'
     pt: 'Validação cruzada M3'
 xlabel:
-  validation: str
+  validator: str
   source: field
   value: "xlabel_timeseries"
 ylabel:
-  validation: str
+  validator: str
   source: field
   value: "ylabel_temperaturediff"
   shared: True
 filename:
-  validation: filename
+  validator: filename
   source: literal
-  value: 'M3_crossvalidation'
+  value: 'M3_crossvalidator'

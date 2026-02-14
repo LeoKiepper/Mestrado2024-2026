@@ -60,7 +60,7 @@ def _yaml_parse_from_dict(handle: dict, ctx: _ParseContext, configs_folder: str,
 		for key, raw_prop in local_handle.items():
 			prop = PSIF.normalize_prop(key, raw_prop)
 			ctx.field_props[key] = prop
-			if prop[PSIF.PropKeys.VALIDATION] == PROP_STRING_VALIDATION_YAML:
+			if prop[PSIF.PropKeys.VALIDATOR] == PROP_STRING_VALIDATION_YAML:
 				try:
 					value = PSIF.fetch_value(key, prop, dump_to, read_from)[1]
 					paths = value if isinstance(value, list) else [value]

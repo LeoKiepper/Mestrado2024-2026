@@ -1,21 +1,21 @@
 base:
-  validation: yaml
+  validator: yaml
   source: literal
   value: "base_ICAR2025-DDSdevelopment.yaml"
 save:
-  validation: bool
+  validator: bool
   source: literal
   value: False
 
 title:
-  validation: title
+  validator: title
   localizable: True
   source: literal
   value:
     en: 'Score History'
     pt: 'Histórico do score'
 xlabel:
-  validation: label
+  validator: label
   localizable: True
   source: literal
   value:
@@ -23,6 +23,6 @@ xlabel:
     pt: 'Iteração'
 # ylabel is inferred in code, because doing so in YAML is impractical
 filename:
-  validation: filename
+  validator: filename
   source: literal
   value: 'M2_training_score_history'

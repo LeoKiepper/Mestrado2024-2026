@@ -1,28 +1,28 @@
 base:
-  validation: yaml
+  validator: yaml
   source: literal
   value: "base_ICAR2025-DDSdevelopment.yaml"
 save:
-  validation: bool
+  validator: bool
   source: literal
   value: True
 
 title:
-  validation: title
+  validator: title
   localizable: True
   source: literal
   value:
     en: 'M2 prediction'
     pt: 'Predição M2'
 xlabel:
-  validation: str
+  validator: str
   source: field
   value: "xlabel_timeseries"
 ylabel:
-  validation: str
+  validator: str
   source: field
   value: "ylabel_temperature"
 filename:
-  validation: filename
+  validator: filename
   source: literal
   value: 'M2_partial_prediction'

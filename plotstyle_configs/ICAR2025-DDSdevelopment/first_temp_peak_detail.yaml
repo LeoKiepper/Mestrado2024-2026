@@ -1,34 +1,34 @@
 base:
-  validation: yaml
+  validator: yaml
   source: literal
   value: "base_ICAR2025-DDSdevelopment.yaml"
 save:
-  validation: bool
+  validator: bool
   source: literal
   value: True
 
 figsize:
-  validation: figsize
+  validator: figsize
   source: field
   value: "figsize_multiple"
 title:
-  validation: str
+  validator: str
   localizable: True
   source: literal
   value:
     en: 'Detailed view for detected high CPU segment'
     pt: 'Detalhe do segmento de alta utilização de CPU'
 xlabel:
-  validation: str
+  validator: str
   source: field
   value: "xlabel_timeseries"
 ylabel:
-  validation: str
+  validator: str
   source: field
   value: 
     - "ylabel_temperature"
     - "ylabel_cpuload"
 filename:
-  validation: filename
+  validator: filename
   source: literal
   value: 'First_temp_peak_detail'
