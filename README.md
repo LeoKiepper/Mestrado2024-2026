@@ -1,6 +1,6 @@
 Desenvolvido para Python 3.13.11
 
-Requisitos: `pip install -r requirements.txt` ou `conda install --file requirements.txt`
+Requisitos: `pip install -r requirements.txt`
 
 
 
