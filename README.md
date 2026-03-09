@@ -1,3 +1,13 @@
+Desenvolvido para Python 3.13.11
+
+Requisitos: `pip install -r requirements.txt` ou `conda install --file requirements.txt`
+
+
+
+OBS: O arquivo .bag usado encontra-se na pasta 'cache'
+
+
+
 Para gerar as Figuras 3.7 -> Rodar DDSEspeleo.py com os flag PLOT_DATASET (linha 73) descomentada
 
 Simulação Monte Carlo:
