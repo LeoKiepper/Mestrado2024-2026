@@ -1,0 +1,14 @@
+bagpy==0.5
+ffmpeg==1.4
+ipython==9.11.0
+matplotlib==3.10.8
+numpy==2.4.3
+pandas==3.0.1
+parse==1.21.0
+psutil==7.2.2
+PyYAML==6.0.3
+ruptures==1.1.10
+scikit_learn==1.8.0
+torch==2.10.0
+tqdm==4.67.3
+xgboost==3.2.0
